@@ -1,93 +1,79 @@
-<div align="center">
+# OneLauncher Ely
 
-<img src=".github/media/RepoBanner.png" alt="Repository Banner" />
+**Unofficial community fork** of [Polyfrost/OneLauncher](https://github.com/Polyfrost/OneLauncher). Not affiliated with, endorsed by, or supported by Polyfrost.
 
-# OneClient  |  OneLauncher
-The monorepo containing the code for OneLauncher, OneClient, and their core backend.
+It adds:
 
-OneClient is a Minecraft client featuring fully 100% open-source components, offering many packaged and pre-configured mods in one click.
+- **Offline accounts** — create a local account without a Microsoft account (singleplayer, LAN, `online-mode=false` servers)
+- **Ely.by accounts** — free community authentication & skin server with visible online skins/capes on Ely.by-enabled servers
+- **Linux builds** — `.deb` and AppImage plus Windows NSIS installer, produced by GitHub Actions
+- Microsoft accounts still work exactly as before
 
-</div>
+**Official project:** please download the official launcher here: https://github.com/Polyfrost/OneLauncher
+This repository exists for people who specifically want the offline/Ely.by features in a community build.
 
-## Installing
+## Install
 
-You can install the latest release of OneClient from our website: [https://polyfrost.org/projects/oneclient](https://polyfrost.org/projects/oneclient)
-as well as our [GitHub releases](https://github.com/Polyfrost/OneLauncher/releases/latest).
+Download the latest release from the [Releases page](https://github.com/AlanNobita/OneLauncher-Ely/releases).
 
-| Windows (x86_64) | macOS (Intel & Apple Silicon) | Linux (x86_64)                                          |
-|------------------|-------------------------------|---------------------------------------------------------|
-| Installer 🔄      | DMG 🔄                        | AppImage 🔄                                             |
-|                  | App Bundle 🔄                 | DEB                                                     |
-|                  |                               | RPM                                                     |
-|                  |                               | *[RPM (COPR)](https://copr.fedorainfracloud.org/coprs/polyfrost/OneClient/) 🔄 |
-|                  |                               | [AUR](https://aur.archlinux.org/packages/oneclient-bin) |
+| Platform | How to install |
+|---|---|
+| Windows 10/11 (x86_64) | Download `OneLauncher Ely_*_x64-setup.exe`, run it, click through the installer. It is **not Authenticode-signed**, so SmartScreen may warn you — **More info → Run anyway**. |
+| Debian / Ubuntu / Mint | Download `*.deb`, then `sudo apt install ./onelauncher-ely_*_amd64.deb` |
+| Other Linux (x86_64) | Download `*.AppImage`, `chmod +x`, run it |
 
-> 🔄 = Has support for autoupdating built-in
+Windows unsigned builds are expected. Verify checksums below if you're cautious.
 
-<details>
+## Verify checksums
 
-<summary><h3>COPR Installation</h3></summary>
-
-On supported distributions (RHEL, Fedora, Bazzite etc.), you can make use of the Fedora COPR instead of using the AppImage or manually installing the RPM file.
-1. First you have to enable the repository:
+Each release includes SHA-256 checksums for every artifact. On Linux:
+```sh
+sha256sum onelauncher-ely*.{deb,AppImage,exe}
+cat SHA256SUMS.txt
 ```
-sudo dnf copr enable polyfrost/OneClient
+On Windows (PowerShell):
+```powershell
+Get-FileHash .\*-setup.exe -Algorithm SHA256
+Get-Content SHA256SUMS.txt
 ```
-2. Then you can install the package:
-```
-sudo dnf install oneclient-bin
-```
 
-</details>
+## What offline and Ely.by do and don't do
 
-## Contributing
+| Feature | Microsoft | Offline | Ely.by |
+|---|---|---|---|
+| Original Mojang online servers (Hypixel, etc.) | ✅ | ❌ no | ❌ no |
+| Ely.by-authenticated servers | ❌ | ❌ | ✅ |
+| LAN / `online-mode=false` server | ✅ | ✅ | ✅ |
+| Singleplayer worlds | ✅ | ✅ | ✅ |
+| Custom skins visible to others | ✅ official | ❌ local only | ✅ on Ely.by servers |
+| PolyPlus (chat, lobby, wardrobe, cosmetics) | ✅ | ❌ no | ❌ no |
 
-We welcome contributions! Please read our [contributing guidelines](CONTRIBUTING.md) before getting started.
+Offline accounts:
+- Username must be 3–16 characters, only letters/digits/underscore
+- UUID is `MD5("OfflinePlayer:<name>")` — the same algorithm vanilla uses
+- Work for singleplayer, LAN, and servers with `online-mode=false`
+- No Mojang validation is performed
 
+Ely.by accounts:
+- Login with your Ely.by username/email + password (TOTP supported)
+- The launcher downloads and signature-checks `authlib-injector.jar` on first launch
+- Visible skins/capes on Ely.by servers
 
-### Requirements
+## Building from source
 
-The project targets **Rust 1.97** or later. You can install Rust via [rustup](https://rustup.rs/).
-
-
-### Building & Running
+Requires Rust 1.97+.
 
 ```sh
-# Run the app
 cargo run -p oneclient_app
-
-# Build a release binary
-cargo build -p oneclient_app --release
-```
-
-
-### Packaging / Releasing
-
-Installers are produced with [**cargo-packager**](https://github.com/crabnebula-dev/cargo-packager)
-(the standalone bundler spun out of the Tauri bundler). Config lives in
-[`packages/oneclient_app/Cargo.toml`](./packages/oneclient_app/Cargo.toml) under
-`[package.metadata.packager]`.
-
-```sh
-cargo install cargo-packager --locked
-
-# Build the binary, then bundle it for the current OS:
 cargo build --release -p oneclient_app
-cargo packager --release -p oneclient_app --formats <targets>
-#   Windows: nsis      macOS: app,dmg      Linux: deb,appimage
+cargo packager --release -p oneclient_app --formats nsis
+cargo packager --release -p oneclient_app --formats deb,appimage
 ```
 
+On Linux you need system build dependencies: cmake, clang/gcc, pkg-config, libfontconfig, libfreetype, libgl/mesa, X11/Wayland/kbcommon dev packages.
 
-### Versioning
+## License & attribution
 
-The workspace shares a single version, defined in the root [`Cargo.toml`](./Cargo.toml) under `[workspace.package]`.
+GPL-3.0-only. See [LICENSE](./LICENSE) and [ATTRIBUTION.md](./ATTRIBUTION.md).
 
-Versions and release notes come from [Knope](https://knope.tech) change files in [`.changeset/`](./.changeset).
-Add one per user-facing change with `knope document-change` (installed via `cargo install knope`). The
-`OneClient Release Build` workflow consumes them, bumps the version, writes [`CHANGELOG.md`](./CHANGELOG.md),
-and uses the new entry as the GitHub release body, which is what the launcher's changelog page shows.
-
-
-## Code signing
-
-This program uses free code signing provided by [SignPath.io](https://signpath.io?utm_source=foundation&utm_medium=github&utm_campaign=0install), and a certificate by the [SignPath Foundation](https://signpath.org?utm_source=foundation&utm_medium=github&utm_campaign=0install). We thank them very much to their contributions to OSS software!
+Original work by Polyfrost and Contributors. This fork preserves attribution and license headers. Polyfrost branding (logo, wordmarks, banners) is removed and is **not** used for this fork.

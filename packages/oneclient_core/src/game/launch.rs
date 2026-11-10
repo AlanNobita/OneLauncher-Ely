@@ -427,6 +427,27 @@ async fn start(
         jvm_args.push(arg);
     }
 
+    // Ely.by (Yggdrasil) needs authlib-injector to redirect the game's
+    // session/skin lookups to Ely.by. Without it the game would validate
+    // against Mojang and Ely.by servers would reject the session.
+    if account.is_ely_by() {
+        let client = state.services.requester.http().clone();
+        let jar = oneclient_auth::ensure_authlib_injector(&client)
+            .await
+            .map_err(|err| GameError::Spawn(format!("Ely.by authlib-injector: {err}")))?;
+        let prefetched = oneclient_auth::prefetched_metadata(&client)
+            .await
+            .map_err(|err| GameError::Spawn(format!("Ely.by metadata: {err}")))?;
+        jvm_args.push(format!(
+            "-javaagent:{}={}",
+            jar.display(),
+            oneclient_auth::ELY_API_URL
+        ));
+        jvm_args.push(format!(
+            "-Dauthlibinjector.yggdrasil.prefetched={prefetched}"
+        ));
+    }
+
     let crash_dir = cluster.dir()?.join("crash-reports");
     polyio::create_dir_all(&crash_dir).await.ok();
     let error_file = crash_dir.join("hs_err_pid").display().to_string();
@@ -450,6 +471,11 @@ async fn start(
         version.type_,
         profile.resolution.unwrap_or_default(),
         &java.os_arch,
+        if account.is_offline() || account.is_ely_by() {
+            "legacy"
+        } else {
+            "msa"
+        },
     )?;
     arguments::append_profile_game_arguments(
         &mut mc_args,

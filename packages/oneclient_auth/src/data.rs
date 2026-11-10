@@ -7,6 +7,7 @@ use uuid::Uuid;
 pub enum AccountKind {
     Microsoft,
     Offline,
+    ElyBy,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -15,6 +16,10 @@ pub struct MinecraftAccount {
     pub username: String,
     pub access_token: String,
     pub refresh_token: String,
+    /// Yggdrasil (Ely.by) clientToken bound to the access token. Empty for
+    /// Microsoft/offline accounts and for accounts saved before this field.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub client_token: String,
     pub expires: DateTime<Utc>,
     #[serde(default = "default_account_kind")]
     pub kind: AccountKind,
@@ -37,8 +42,12 @@ impl MinecraftAccount {
         self.kind == AccountKind::Offline
     }
 
+    pub fn is_ely_by(&self) -> bool {
+        self.kind == AccountKind::ElyBy
+    }
+
     pub fn needs_sign_in(&self) -> bool {
-        self.is_microsoft() && self.signed_out
+        (self.is_microsoft() || self.is_ely_by()) && self.signed_out
     }
 
     pub fn is_expired(&self) -> bool {

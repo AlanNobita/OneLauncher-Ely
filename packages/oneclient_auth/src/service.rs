@@ -198,6 +198,30 @@ impl AuthService {
             .await
     }
 
+    /// Ely.by (Yggdrasil) login. Password (and optional TOTP) never persist —
+    /// only the returned accessToken + clientToken are stored, like Microsoft.
+    #[tracing::instrument(skip(self, password), fields(username = %username))]
+    pub async fn login_ely_by(
+        &self,
+        username: String,
+        password: String,
+        totp: Option<String>,
+    ) -> AuthResult<MinecraftAccount> {
+        tracing::info!(username = %username, "Ely.by login");
+        let account = crate::yggdrasil::authenticate_ely_by(
+            self.net.http(),
+            &username,
+            &password,
+            totp.as_deref(),
+        )
+        .await?;
+        self.store
+            .lock()
+            .await
+            .commit_account(account, &self.events)
+            .await
+    }
+
     pub async fn list_accounts(&self) -> Vec<MinecraftAccount> {
         self.store.lock().await.list_accounts()
     }
@@ -262,20 +286,35 @@ impl AuthService {
             .ok_or(AuthError::AccountNotFound(id))
     }
 
-    /// The store lock is never held across the Microsoft handshake only around
-    /// the reads and the final write
+    /// The store lock is never held across the Microsoft/Yggdrasil handshake
+    /// only around the reads and the final write
     #[tracing::instrument(level = "debug", skip(self), fields(%id))]
     async fn renew_token(&self, id: Uuid, force: bool) -> AuthResult<MinecraftAccount> {
         let existing = self.account_snapshot(id).await?;
-        if existing.needs_sign_in() && existing.refresh_token.is_empty() {
+        if existing.is_offline() {
+            return Ok(existing);
+        }
+        // Signed-out entries carry no usable token pair; surface SessionExpired
+        // so account_for_launch can still play singleplayer and the UI prompts.
+        let credential_missing = if existing.is_ely_by() {
+            existing.client_token.is_empty()
+        } else {
+            existing.refresh_token.is_empty()
+        };
+        if existing.needs_sign_in() && credential_missing {
             return Err(AuthError::SessionExpired {
                 username: existing.username,
             });
         }
-        if !existing.is_microsoft()
-            || (!force && !existing.needs_sign_in() && !existing.is_expired())
-        {
+        if !existing.is_microsoft() && !existing.is_ely_by() {
             return Ok(existing);
+        }
+        if !force && !existing.needs_sign_in() && !existing.is_expired() {
+            // Ely.by tokens are validated cheaply even when unexpired on
+            // forced refresh (refresh_account); on launch, expiry is enough.
+            if existing.is_microsoft() || !force {
+                return Ok(existing);
+            }
         }
 
         let guard = self.refresh_guard(id);
@@ -283,15 +322,28 @@ impl AuthService {
 
         // Re-read under the guard whoever held it may have just refreshed
         let existing = self.account_snapshot(id).await?;
-        if existing.needs_sign_in() && existing.refresh_token.is_empty() {
-            return Err(AuthError::SessionExpired {
-                username: existing.username,
-            });
+        if existing.needs_sign_in() {
+            let missing = if existing.is_ely_by() {
+                existing.client_token.is_empty()
+            } else {
+                existing.refresh_token.is_empty()
+            };
+            if missing {
+                return Err(AuthError::SessionExpired {
+                    username: existing.username,
+                });
+            }
         }
-        if !existing.is_microsoft()
-            || (!force && !existing.needs_sign_in() && !existing.is_expired())
+        if !existing.is_microsoft() && !existing.is_ely_by() {
+            return Ok(existing);
+        }
+        if !force && !existing.needs_sign_in() && !existing.is_expired() && existing.is_microsoft()
         {
             return Ok(existing);
+        }
+
+        if existing.is_ely_by() {
+            return self.renew_ely_by_token(id, existing, force).await;
         }
 
         tracing::info!(username = %existing.username, "renewing Microsoft access token");
@@ -320,6 +372,39 @@ impl AuthService {
                     Err(err)
                 }
             }
+        }
+    }
+
+    async fn renew_ely_by_token(
+        &self,
+        id: Uuid,
+        existing: MinecraftAccount,
+        _force: bool,
+    ) -> AuthResult<MinecraftAccount> {
+        // Validate first — a live token needs no rotation.
+        if crate::yggdrasil::validate_ely_by(self.net.http(), &existing).await {
+            return Ok(existing);
+        }
+        tracing::info!(username = %existing.username, "renewing Ely.by access token");
+        match crate::yggdrasil::refresh_ely_by(self.net.http(), &existing).await {
+            Ok(refreshed) => {
+                let mut refreshed = refreshed;
+                refreshed.id = id;
+                self.store
+                    .lock()
+                    .await
+                    .commit_refreshed_account(refreshed.clone())
+                    .await?;
+                Ok(refreshed)
+            }
+            Err(AuthError::ElyByFailed { .. }) => {
+                tracing::warn!(username = %existing.username, "Ely.by refresh rejected, marking signed out");
+                self.store.lock().await.mark_signed_out(id).await?;
+                Err(AuthError::SessionExpired {
+                    username: existing.username,
+                })
+            }
+            Err(err) => Err(err),
         }
     }
 
@@ -358,7 +443,7 @@ impl AuthService {
             .await
             .users
             .values()
-            .filter(|a| a.is_microsoft() && !a.needs_sign_in() && a.is_expired())
+            .filter(|a| (a.is_microsoft() || a.is_ely_by()) && !a.needs_sign_in() && a.is_expired())
             .map(|a| a.id)
             .collect();
 
@@ -386,10 +471,6 @@ impl AuthService {
             }
             Err(err) => return Err(err),
         };
-
-        if account.is_offline() && !self.has_microsoft_account().await {
-            return Err(AuthError::OfflineRequiresMicrosoft);
-        }
 
         Ok(account)
     }

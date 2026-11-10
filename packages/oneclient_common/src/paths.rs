@@ -108,6 +108,10 @@ pub fn auth_file() -> PathsResult<PathBuf> {
     Ok(config_dir()?.join("auth.json"))
 }
 
+pub fn authlib_injector_jar() -> PathsResult<PathBuf> {
+    Ok(metadata_dir()?.join("authlib-injector").join("authlib-injector.jar"))
+}
+
 pub fn themes_dir() -> PathsResult<PathBuf> {
     Ok(config_dir()?.join("themes"))
 }

@@ -182,6 +182,7 @@ pub fn minecraft_arguments(
     version_type: VersionType,
     resolution: Resolution,
     java_arch: &str,
+    user_type: &str,
 ) -> McResult<Vec<String>> {
     let mut parsed = Vec::new();
 
@@ -200,6 +201,7 @@ pub fn minecraft_arguments(
                 assets_directory,
                 version_type,
                 resolution,
+                user_type,
             )?);
         }
     }
@@ -220,6 +222,7 @@ pub fn minecraft_arguments(
                     assets_directory,
                     version_type,
                     resolution,
+                    user_type,
                 )
             },
             java_arch,
@@ -366,6 +369,7 @@ pub fn parse_minecraft_argument(
     assets_directory: &Path,
     version_type: VersionType,
     resolution: Resolution,
+    user_type: &str,
 ) -> McResult<String> {
     Ok(argument
         .replace("${accessToken}", access_token)
@@ -380,7 +384,7 @@ pub fn parse_minecraft_argument(
             oneclient_common::constants::MICROSOFT_CLIENT_ID,
         )
         .replace("${user_properties}", "{}")
-        .replace("${user_type}", "msa")
+        .replace("${user_type}", user_type)
         .replace("${version_name}", version)
         .replace("${assets_index_name}", asset_index)
         .replace(
@@ -1116,6 +1120,7 @@ mod tests {
             interfrost::api::minecraft::VersionType::Release,
             Resolution::default(),
             "arm64",
+            "msa",
         )
         .unwrap();
 
@@ -1148,12 +1153,37 @@ mod tests {
             interfrost::api::minecraft::VersionType::Release,
             Resolution::default(),
             "arm64",
+            "legacy",
         )
         .unwrap();
 
         assert_eq!(args.iter().filter(|a| *a == "--gameDir").count(), 1);
         assert_eq!(args.iter().filter(|a| *a == "--username").count(), 1);
         assert_eq!(args.iter().filter(|a| *a == "--tweakClass").count(), 1);
+    }
+
+    #[test]
+    fn user_type_follows_the_account_kind() {
+        let dir = std::env::temp_dir();
+        for (user_type, expected) in [("msa", "msa"), ("legacy", "legacy")] {
+            let args = minecraft_arguments(
+                None,
+                Some("--userType ${user_type}"),
+                "",
+                "player",
+                uuid::Uuid::nil(),
+                "1.21.4",
+                "1.21.4",
+                &dir,
+                &dir,
+                interfrost::api::minecraft::VersionType::Release,
+                Resolution::default(),
+                "arm64",
+                user_type,
+            )
+            .unwrap();
+            assert_eq!(args, vec!["--userType", expected]);
+        }
     }
 
     #[test]

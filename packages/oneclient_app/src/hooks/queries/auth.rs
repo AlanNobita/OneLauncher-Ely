@@ -235,6 +235,39 @@ impl MutationCapability for AddOfflineAccountMutation {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AddElyByAccountMutation;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct AddElyByAccountKeys {
+    pub username: String,
+    pub password: String,
+    pub totp: Option<String>,
+}
+
+impl MutationCapability for AddElyByAccountMutation {
+    type Ok = MinecraftAccount;
+    type Err = LauncherError;
+    type Keys = AddElyByAccountKeys;
+
+    async fn run(&self, keys: &Self::Keys) -> Result<Self::Ok, Self::Err> {
+        Ok(crate::launcher::state()?
+            .auth
+            .login_ely_by(
+                keys.username.clone(),
+                keys.password.clone(),
+                keys.totp.clone(),
+            )
+            .await?)
+    }
+
+    async fn on_settled(&self, _keys: &Self::Keys, result: &Result<Self::Ok, Self::Err>) {
+        if let Ok(account) = result {
+            invalidate_auth_queries(Some(account.id)).await;
+        }
+    }
+}
+
 async fn leave_party_before_sign_out(auth: std::sync::Arc<oneclient_auth::AuthService>, id: Uuid) {
     let left = crate::launcher::off_ui(async move {
         tokio::time::timeout(SIGN_OUT_LEAVE_LIMIT, async {
@@ -379,6 +412,10 @@ pub fn use_add_microsoft_account() -> UseMutation<AddMicrosoftAccountMutation> {
 
 pub fn use_add_offline_account() -> UseMutation<AddOfflineAccountMutation> {
     use_mutation(Mutation::new(AddOfflineAccountMutation))
+}
+
+pub fn use_add_ely_by_account() -> UseMutation<AddElyByAccountMutation> {
+    use_mutation(Mutation::new(AddElyByAccountMutation))
 }
 
 pub fn use_remove_account() -> UseMutation<RemoveAccountMutation> {

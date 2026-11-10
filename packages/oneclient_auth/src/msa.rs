@@ -555,6 +555,7 @@ async fn account_from_msa_token(
         username: profile.name,
         access_token: minecraft_token.access_token,
         refresh_token: msa.refresh_token,
+        client_token: String::new(),
         // The Minecraft token outlives the Microsoft one (24h vs 1h) keying off
         // it means the refresh token is only rotated when the game token lapses
         #[allow(clippy::cast_possible_wrap)]

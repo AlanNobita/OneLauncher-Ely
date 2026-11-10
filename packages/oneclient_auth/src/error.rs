@@ -135,9 +135,15 @@ pub enum AuthError {
     InvalidOfflineUsername { reason: String },
 
     #[error(
-        "Your Microsoft sign-in for {username} has expired. Sign in to it again in Settings > Accounts."
+        "Your sign-in for {username} has expired. Sign in to it again in Settings > Accounts."
     )]
     SessionExpired { username: String },
+
+    #[error("Ely.by login failed: {message}")]
+    ElyByFailed { message: String },
+
+    #[error("Ely.by account requires a two-factor code")]
+    ElyByTwoFactorRequired,
 
     #[error("account {0} is not registered")]
     AccountNotFound(uuid::Uuid),

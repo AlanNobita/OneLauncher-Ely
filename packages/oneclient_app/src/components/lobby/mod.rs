@@ -524,6 +524,7 @@ mod tests {
             username: "player".to_string(),
             access_token: "token".to_string(),
             refresh_token: String::new(),
+            client_token: String::new(),
             expires: Utc::now(),
             kind,
             signed_out: false,

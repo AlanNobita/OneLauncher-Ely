@@ -1,11 +1,15 @@
 use freya::prelude::*;
+use freya::query::{MutationCapability, MutationStateData, UseMutation};
 use oneclient_auth::MinecraftAccount;
 
 use crate::components::{Avatar, Button, Icon, IconType, use_microsoft_login};
-use crate::hooks::{try_default_account, use_current_account};
+use crate::hooks::{
+    AddOfflineAccountKeys, try_default_account, use_add_offline_account, use_current_account,
+};
 use crate::i18n::t;
 use crate::routes::Route;
 use crate::theme::{colors, text_size};
+use crate::view::app::settings::offline_dialog;
 use crate::view::onboarding::{
     onboarding_illustration, onboarding_nav, onboarding_page, step_heading,
 };
@@ -17,9 +21,48 @@ impl Component for OnboardingAccount {
     fn render(&self) -> impl IntoElement {
         let account_query = use_current_account();
         let msa = use_microsoft_login();
+        let add_offline = use_add_offline_account();
+
+        let mut username = use_state(String::new);
+        let mut show_offline = use_state(|| false);
+        let mut closing_offline = use_state(|| false);
+
+        use_side_effect(move || {
+            if !*closing_offline.read() {
+                return;
+            }
+            match &*add_offline.read().state() {
+                MutationStateData::Settled { res: Ok(_), .. } => {
+                    closing_offline.set(false);
+                    show_offline.set(false);
+                    username.set(String::new());
+                }
+                MutationStateData::Settled { res: Err(_), .. } => {
+                    closing_offline.set(false);
+                }
+                _ => {}
+            }
+        });
 
         let account = try_default_account(&account_query);
         let has_account = account.is_some();
+
+        let offline_name = username.read().trim().to_string();
+        let offline_uuid = (!offline_name.is_empty())
+            .then(|| oneclient_auth::offline_uuid(&offline_name).to_string());
+        let offline_validation_error = (!offline_name.is_empty())
+            .then(|| oneclient_auth::validate_offline_username(&offline_name))
+            .and_then(|r| r.err().map(|e| e.to_string()));
+        let offline_error = mutation_err_text(&add_offline);
+
+        let on_confirm_offline = move |_| {
+            let name = username.peek().trim().to_string();
+            if name.is_empty() {
+                return;
+            }
+            add_offline.mutate(AddOfflineAccountKeys { username: name });
+            closing_offline.set(true);
+        };
 
         let content = rect()
             .vertical()
@@ -33,8 +76,13 @@ impl Component for OnboardingAccount {
                 Some(account) => account_preview(account).into_element(),
                 None => {
                     let start = msa.clone();
-                    sign_in_card(msa.pending, msa.error.clone(), move |_| start.start())
-                        .into_element()
+                    sign_in_card(
+                        msa.pending,
+                        msa.error.clone(),
+                        move |_| start.start(),
+                        move |_| show_offline.set(true),
+                    )
+                    .into_element()
                 }
             })
             .into_element();
@@ -54,6 +102,30 @@ impl Component for OnboardingAccount {
             .height(Size::fill())
             .child(page)
             .maybe_child(msa.popup())
+            .maybe_child(show_offline.read().then(|| {
+                offline_dialog(
+                    username,
+                    offline_uuid,
+                    offline_validation_error,
+                    offline_error,
+                    on_confirm_offline,
+                    show_offline,
+                )
+            }))
+    }
+}
+
+fn mutation_err_text<M>(mutation: &UseMutation<M>) -> Option<String>
+where
+    M: MutationCapability,
+    M::Err: std::fmt::Display,
+{
+    match &*mutation.read().state() {
+        MutationStateData::Settled { res: Err(err), .. } => Some(err.to_string()),
+        MutationStateData::Loading {
+            res: Some(Err(err)),
+        } => Some(err.to_string()),
+        _ => None,
     }
 }
 
@@ -98,23 +170,40 @@ fn sign_in_card(
     pending: bool,
     error: Option<String>,
     on_add: impl FnMut(Event<PressEventData>) + 'static,
+    on_add_offline: impl FnMut(Event<PressEventData>) + 'static,
 ) -> impl IntoElement {
     rect()
         .vertical()
         .spacing(12.)
         .cross_align(Alignment::Start)
         .child(
-            Button::new()
-                .primary()
-                .large()
-                .enabled(!pending)
-                .on_press(on_add)
-                .child(Icon::new(IconType::Globe01).size(16.))
-                .text(if pending {
-                    t("oneclient.onboarding.account.signing_in")
-                } else {
-                    t("oneclient.onboarding.account.add")
-                }),
+            rect()
+                .horizontal()
+                .width(Size::fill())
+                .content(Content::wrap_spacing(8.))
+                .spacing(8.)
+                .child(
+                    Button::new()
+                        .primary()
+                        .large()
+                        .enabled(!pending)
+                        .on_press(on_add)
+                        .child(Icon::new(IconType::Globe01).size(16.))
+                        .text(if pending {
+                            t("oneclient.onboarding.account.signing_in")
+                        } else {
+                            t("oneclient.onboarding.account.add")
+                        }),
+                )
+                .child(
+                    Button::new()
+                        .secondary()
+                        .large()
+                        .enabled(!pending)
+                        .on_press(on_add_offline)
+                        .child(Icon::new(IconType::Plus).size(16.))
+                        .text(t("oneclient.settings.accounts.add_offline")),
+                ),
         )
         .maybe_child(error.map(|message| {
             rect()

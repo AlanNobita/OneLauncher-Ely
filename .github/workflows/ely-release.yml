@@ -1,0 +1,136 @@
+name: OneLauncher Ely Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ely-release-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_PROFILE_RELEASE_LTO: thin
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '16'
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            formats: nsis
+            artifact_hint: onelauncher-ely-windows
+          - platform: ubuntu-22.04
+            formats: deb,appimage
+            artifact_hint: onelauncher-ely-linux
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: (Linux) Install system dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake pkg-config clang python3 \
+            libfontconfig-dev libfreetype-dev \
+            libgl1-mesa-dev libx11-dev libxcursor-dev libxi-dev libxrandr-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libdbus-1-dev \
+            libfuse2
+
+      - name: Setup Rust
+        uses: ./.github/actions/setup-rust
+        with:
+          save-cache: true
+          restore-cache: true
+          cache-namespace: ely-release-cache
+
+      - name: Install cargo-packager
+        uses: ./.github/actions/install-cargo-tool
+        with:
+          tool: cargo-packager
+          version: 0.11.8
+
+      - name: Build release binary
+        shell: bash
+        run: cargo build --release --bin oneclient_app
+
+      - name: (Windows) Stage app-local VC++ runtime
+        if: matrix.platform == 'windows-latest'
+        shell: bash
+        run: python3 distribution/windows/bundle-crt.py
+
+      - name: Package installer and bundles
+        shell: bash
+        run: |
+          ARGS="--release --formats ${{ matrix.formats }}"
+          cargo packager $ARGS --verbose
+
+      - name: Locate artifacts
+        id: artifacts
+        shell: bash
+        run: |
+          shopt -s nullglob
+          files=$(find target/release -maxdepth 3 \( -name '*.exe' -o -name '*.deb' -o -name '*.AppImage' \) -print | tr '\n' ' ')
+          echo "found: $files"
+          echo "files=$files" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ matrix.artifact_hint }}
+          path: |
+            ${{ steps.artifacts.outputs.files }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@018cc2cc28b6b1a24154893c16b8c3aff5a9e888 # v6.0.0
+        with:
+          path: dist
+
+      - name: Generate checksums
+        shell: bash
+        run: |
+          cd dist
+          find . -type f | sort | while read -r f; do sha256sum "$f"; done > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@a2d8a84e54925c81d4a28b903a363783da7cebec # v2.0.8
+        with:
+          name: OneLauncher Ely ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          files: |
+            dist/**/*
+            dist/SHA256SUMS.txt
+          draft: false
+          prerelease: ${{ startsWith(github.ref_name, 'v0') }}
+          generate_release_notes: true
+          body: |
+            ## OneLauncher Ely ${{ github.ref_name }}
+
+            Unofficial community fork of Polyfrost/OneLauncher.
+
+            ### Downloads
+            Windows: `*_x64-setup.exe` — not Authenticode-signed. SmartScreen may warn; choose *More info → Run anyway*.
+            Linux: `.deb` for Debian/Ubuntu or `.AppImage` otherwise.
+            SHA-256 checksums are in **SHA256SUMS.txt**.
+
+            ### Added in this fork
+            - Offline accounts (MD5 `OfflinePlayer:` UUID)
+            - Ely.by accounts via authlib-injector
+            - Debian/AppImage packaging

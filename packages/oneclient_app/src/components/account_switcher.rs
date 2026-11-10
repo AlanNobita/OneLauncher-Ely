@@ -200,6 +200,7 @@ impl Component for AccountRow {
         let id = self.account.id;
         let username = self.account.username.clone();
         let active = self.active;
+        let kind = self.account.kind;
 
         let dispatch = use_dispatch();
         let set_default = use_set_default_account();
@@ -245,14 +246,25 @@ impl Component for AccountRow {
                             .max_lines(1)
                             .color(colors::fg_primary()),
                     )
-                    .maybe(active, |el| {
-                        el.child(
-                            label()
-                                .text(t("oneclient.components.account_switcher.active"))
-                                .font_size(text_size(11.))
-                                .color(colors::fg_secondary()),
-                        )
-                    }),
+                    .child(
+                        label()
+                            .text(if active {
+                                // Keep the original Active label as the primary subtitle.
+                                t("oneclient.components.account_switcher.active").to_string()
+                            } else {
+                                match kind {
+                                    oneclient_auth::AccountKind::Microsoft => {
+                                        "Microsoft".to_string()
+                                    }
+                                    oneclient_auth::AccountKind::Offline => {
+                                        t("oneclient.settings.accounts.kind.offline").to_string()
+                                    }
+                                    oneclient_auth::AccountKind::ElyBy => "Ely.by".to_string(),
+                                }
+                            })
+                            .font_size(text_size(11.))
+                            .color(colors::fg_secondary()),
+                    ),
             )
             .maybe(active, |el| {
                 el.child(

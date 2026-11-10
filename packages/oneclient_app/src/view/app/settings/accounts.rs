@@ -11,10 +11,10 @@ use crate::components::{
     use_microsoft_login,
 };
 use crate::hooks::{
-    AddOfflineAccountKeys, RefreshAccountKeys, RemoveAccountKeys, SetDefaultAccountKeys,
-    accounts_have_microsoft, try_accounts, try_default_account, use_accounts,
-    use_add_offline_account, use_current_account, use_refresh_account, use_remove_account,
-    use_set_default_account,
+    AddElyByAccountKeys, AddOfflineAccountKeys, RefreshAccountKeys, RemoveAccountKeys,
+    SetDefaultAccountKeys, try_accounts, try_default_account, use_accounts,
+    use_add_ely_by_account, use_add_offline_account, use_current_account, use_refresh_account,
+    use_remove_account, use_set_default_account,
 };
 use crate::i18n::t;
 use crate::theme::{colors, rounded, text_size};
@@ -36,6 +36,7 @@ impl Component for SettingsAccounts {
 
         let msa = use_microsoft_login();
         let add_offline = use_add_offline_account();
+        let add_ely = use_add_ely_by_account();
         let set_default = use_set_default_account();
         let remove = use_remove_account();
         let refresh = use_refresh_account();
@@ -43,6 +44,13 @@ impl Component for SettingsAccounts {
         let mut username = use_state(String::new);
         let mut show_offline = use_state(|| false);
         let mut closing_offline = use_state(|| false);
+
+        let mut ely_username = use_state(String::new);
+        let mut ely_password = use_state(String::new);
+        let mut ely_totp = use_state(String::new);
+        let mut show_ely = use_state(|| false);
+        let mut closing_ely = use_state(|| false);
+        let mut ely_needs_totp = use_state(|| false);
 
         use_side_effect(move || {
             if !*closing_offline.read() {
@@ -61,14 +69,43 @@ impl Component for SettingsAccounts {
             }
         });
 
+        use_side_effect(move || {
+            if !*closing_ely.read() {
+                return;
+            }
+            match &*add_ely.read().state() {
+                MutationStateData::Settled { res: Ok(_), .. } => {
+                    closing_ely.set(false);
+                    show_ely.set(false);
+                    ely_username.set(String::new());
+                    ely_password.set(String::new());
+                    ely_totp.set(String::new());
+                    ely_needs_totp.set(false);
+                }
+                MutationStateData::Settled {
+                    res: Err(err),
+                    ..
+                } => {
+                    closing_ely.set(false);
+                    if err.to_string().contains("two-factor") {
+                        ely_needs_totp.set(true);
+                    }
+                }
+                _ => {}
+            }
+        });
+
         let accounts = try_accounts(&accounts_query).unwrap_or_default();
         let default_account = try_default_account(&default_query);
         let default_id = default_account.as_ref().map(|a| a.id);
-        let has_microsoft = accounts_have_microsoft(&accounts);
 
         let offline_name = username.read().trim().to_string();
         let offline_uuid = (!offline_name.is_empty())
             .then(|| oneclient_auth::offline_uuid(&offline_name).to_string());
+        // Live validation reuses the same hint_line as post-submit errors.
+        let offline_validation_error = (!offline_name.is_empty())
+            .then(|| oneclient_auth::validate_offline_username(&offline_name))
+            .and_then(|r| r.err().map(|e| e.to_string()));
 
         let offline_error = mutation_err_text(&add_offline);
 
@@ -79,6 +116,22 @@ impl Component for SettingsAccounts {
             }
             add_offline.mutate(AddOfflineAccountKeys { username: name });
             closing_offline.set(true);
+        };
+
+        let ely_error = mutation_err_text(&add_ely);
+        let on_confirm_ely = move |_| {
+            let name = ely_username.peek().trim().to_string();
+            let password = ely_password.peek().clone();
+            if name.is_empty() || password.is_empty() {
+                return;
+            }
+            let totp = ely_totp.peek().trim().to_string();
+            add_ely.mutate(AddElyByAccountKeys {
+                username: name,
+                password,
+                totp: (!totp.is_empty()).then_some(totp),
+            });
+            closing_ely.set(true);
         };
 
         let mut rows: Vec<Element> = accounts
@@ -95,6 +148,8 @@ impl Component for SettingsAccounts {
                     remove,
                     refresh,
                     sign_in: msa.clone(),
+                    ely_username,
+                    show_ely,
                 }
                 .into_element()
             })
@@ -106,10 +161,10 @@ impl Component for SettingsAccounts {
         settings_page()
             .child(hero(
                 default_account,
-                has_microsoft,
                 msa.pending,
                 msa.error.clone(),
                 move |_| show_offline.set(true),
+                move |_| show_ely.set(true),
                 {
                     let msa = msa.clone();
                     move |_| msa.start()
@@ -123,9 +178,21 @@ impl Component for SettingsAccounts {
                 offline_dialog(
                     username,
                     offline_uuid,
+                    offline_validation_error,
                     offline_error,
                     on_confirm_offline,
                     show_offline,
+                )
+            }))
+            .maybe_child(show_ely.read().then(|| {
+                ely_dialog(
+                    ely_username,
+                    ely_password,
+                    ely_totp,
+                    *ely_needs_totp.read(),
+                    ely_error,
+                    on_confirm_ely,
+                    show_ely,
                 )
             }))
             .maybe_child(msa.popup())
@@ -135,10 +202,10 @@ impl Component for SettingsAccounts {
 
 fn hero(
     account: Option<MinecraftAccount>,
-    has_microsoft: bool,
     microsoft_pending: bool,
     error: Option<String>,
     on_open_offline: impl FnMut(Event<PressEventData>) + 'static,
+    on_open_ely: impl FnMut(Event<PressEventData>) + 'static,
     on_add_microsoft: impl FnMut(Event<PressEventData>) + 'static,
 ) -> impl IntoElement {
     let (name, subtitle) = match &account {
@@ -222,21 +289,20 @@ fn hero(
                                 .child(
                                     Button::new()
                                         .secondary()
-                                        .enabled(has_microsoft)
                                         .on_press(on_open_offline)
                                         .child(Icon::new(IconType::Plus).size(16.))
                                         .text(t("oneclient.settings.accounts.add_offline")),
+                                )
+                                .child(
+                                    Button::new()
+                                        .secondary()
+                                        .on_press(on_open_ely)
+                                        .child(Icon::new(IconType::Globe01).size(16.))
+                                        .text(t("oneclient.settings.accounts.add_ely_by")),
                                 ),
                         )
                         .map(error, |el, msg| {
                             el.child(hint_line(IconType::AlertTriangle, msg, colors::danger()))
-                        })
-                        .maybe(!has_microsoft, |el| {
-                            el.child(hint_line(
-                                IconType::InfoCircle,
-                                t("oneclient.settings.accounts.microsoft_required").to_string(),
-                                colors::fg_secondary(),
-                            ))
                         }),
                 ),
         )
@@ -293,13 +359,16 @@ where
     }
 }
 
-fn offline_dialog(
+pub(crate) fn offline_dialog(
     username: State<String>,
     uuid_preview: Option<String>,
+    validation_error: Option<String>,
     error: Option<String>,
     on_confirm: impl FnMut(Event<PressEventData>) + 'static,
     mut show_offline: State<bool>,
 ) -> impl IntoElement {
+    // Live validation wins over the post-submit mutation error.
+    let shown_error = validation_error.or(error);
     OverlayPopup::new()
         .on_close(move |()| show_offline.set(false))
         .child(
@@ -349,9 +418,14 @@ fn offline_dialog(
                                         .color(colors::fg_secondary()),
                                 ),
                         )
-                        .map(error, |el, msg| {
+                        .map(shown_error, |el, msg| {
                             el.child(hint_line(IconType::AlertTriangle, msg, colors::danger()))
                         })
+                        .child(hint_line(
+                            IconType::InfoCircle,
+                            t("oneclient.settings.accounts.offline.note").to_string(),
+                            colors::fg_secondary(),
+                        ))
                         .child(
                             rect()
                                 .horizontal()
@@ -370,6 +444,112 @@ fn offline_dialog(
                                         .on_press(on_confirm)
                                         .child(Icon::new(IconType::Plus).size(16.))
                                         .text(t("oneclient.settings.accounts.offline.confirm")),
+                                ),
+                        ),
+                ),
+        )
+        .into_element()
+}
+
+pub(crate) fn ely_dialog(
+    username: State<String>,
+    password: State<String>,
+    totp: State<String>,
+    needs_totp: bool,
+    error: Option<String>,
+    on_confirm: impl FnMut(Event<PressEventData>) + 'static,
+    mut show_ely: State<bool>,
+) -> impl IntoElement {
+    OverlayPopup::new()
+        .on_close(move |()| show_ely.set(false))
+        .child(
+            rect()
+                .width(Size::window_percent(100.))
+                .height(Size::window_percent(100.))
+                .center()
+                .child(
+                    rect()
+                        .vertical()
+                        .width(Size::px(380.))
+                        .max_width(Size::window_percent(90.))
+                        .spacing(16.)
+                        .padding(Gaps::new_all(20.))
+                        .corner_radius(rounded(16.))
+                        .background(colors::page_elevated())
+                        .border(border_all_color(1., colors::component_border()))
+                        .child(
+                            label()
+                                .text(t("oneclient.settings.accounts.ely_by.title"))
+                                .font_size(text_size(18.))
+                                .font_weight(FontWeight::SEMI_BOLD)
+                                .color(colors::fg_primary()),
+                        )
+                        .child(
+                            rect()
+                                .vertical()
+                                .width(Size::fill())
+                                .spacing(6.)
+                                .child(field_label(t(
+                                    "oneclient.settings.accounts.ely_by.username",
+                                )))
+                                .child(TextInput::new(username).placeholder(t(
+                                    "oneclient.settings.accounts.ely_by.username_placeholder",
+                                ))),
+                        )
+                        .child(
+                            rect()
+                                .vertical()
+                                .width(Size::fill())
+                                .spacing(6.)
+                                .child(field_label(t(
+                                    "oneclient.settings.accounts.ely_by.password",
+                                )))
+                                .child(
+                                    TextInput::new(password)
+                                        .mode(InputMode::new_password())
+                                        .placeholder(t(
+                                            "oneclient.settings.accounts.ely_by.password_placeholder",
+                                        )),
+                                ),
+                        )
+                        .maybe(needs_totp, |el| {
+                            el.child(
+                                rect()
+                                    .vertical()
+                                    .width(Size::fill())
+                                    .spacing(6.)
+                                    .child(field_label(t(
+                                        "oneclient.settings.accounts.ely_by.totp",
+                                    )))
+                                    .child(TextInput::new(totp).placeholder("123456")),
+                            )
+                        })
+                        .map(error, |el, msg| {
+                            el.child(hint_line(IconType::AlertTriangle, msg, colors::danger()))
+                        })
+                        .child(hint_line(
+                            IconType::InfoCircle,
+                            t("oneclient.settings.accounts.ely_by.note").to_string(),
+                            colors::fg_secondary(),
+                        ))
+                        .child(
+                            rect()
+                                .horizontal()
+                                .width(Size::fill())
+                                .main_align(Alignment::End)
+                                .spacing(8.)
+                                .child(
+                                    Button::new()
+                                        .ghost()
+                                        .on_press(move |_| show_ely.set(false))
+                                        .text(t("oneclient.common.cancel")),
+                                )
+                                .child(
+                                    Button::new()
+                                        .primary()
+                                        .on_press(on_confirm)
+                                        .child(Icon::new(IconType::Globe01).size(16.))
+                                        .text(t("oneclient.settings.accounts.ely_by.confirm")),
                                 ),
                         ),
                 ),
@@ -423,6 +603,8 @@ struct AccountRow {
     remove: crate::hooks::UseRemoveAccount,
     refresh: crate::hooks::UseRefreshAccount,
     sign_in: MicrosoftLogin,
+    ely_username: State<String>,
+    show_ely: State<bool>,
 }
 
 impl PartialEq for AccountRow {
@@ -450,9 +632,10 @@ impl Component for AccountRow {
         let refresh = self.refresh;
 
         let is_microsoft = self.kind == AccountKind::Microsoft;
-        let signed_out = is_microsoft && self.signed_out;
+        let is_token_account = is_microsoft || self.kind == AccountKind::ElyBy;
+        let signed_out = is_token_account && self.signed_out;
         // A signed-out entry has no token left to call expired
-        let expired = is_microsoft && !signed_out && self.expires <= Utc::now();
+        let expired = is_token_account && !signed_out && self.expires <= Utc::now();
         let identity_opacity = if signed_out { SIGNED_OUT_OPACITY } else { 1. };
         let sign_in = self.sign_in.clone();
 
@@ -555,13 +738,22 @@ impl Component for AccountRow {
             )
             .maybe_child(signed_out.then(|| {
                 let pending = sign_in.pending;
+                let is_ely = self.kind == AccountKind::ElyBy;
+                let mut ely_username = self.ely_username;
+                let mut show_ely = self.show_ely;
+                let username = self.username.clone();
                 Button::new()
                     .secondary()
                     .enabled(!pending)
                     .tooltip(t("oneclient.settings.accounts.sign_in_again"))
                     .on_press(move |e: Event<PressEventData>| {
                         e.stop_propagation();
-                        sign_in.start();
+                        if is_ely {
+                            ely_username.set(username.clone());
+                            show_ely.set(true);
+                        } else {
+                            sign_in.start();
+                        }
                     })
                     .child(Icon::new(IconType::Globe01).size(16.))
                     .text(if pending {
@@ -571,7 +763,7 @@ impl Component for AccountRow {
                     })
                     .into_element()
             }))
-            .maybe_child((is_microsoft && !signed_out).then(|| {
+            .maybe_child((is_token_account && !signed_out).then(|| {
                 Button::new()
                     .ghost()
                     .icon()
@@ -635,6 +827,7 @@ fn kind_label(kind: AccountKind) -> &'static str {
     match kind {
         AccountKind::Microsoft => "Microsoft",
         AccountKind::Offline => t("oneclient.settings.accounts.kind.offline"),
+        AccountKind::ElyBy => "Ely.by",
     }
 }
 

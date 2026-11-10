@@ -120,6 +120,7 @@ impl Component for AccountHeader {
             (Some(account), false) if account.is_microsoft() => {
                 t("oneclient.components.control_center.microsoft_account")
             }
+            (Some(account), false) if account.is_ely_by() => "Ely.by account",
             (Some(_), false) => t("oneclient.components.control_center.offline_account"),
             (None, false) if loading => t("oneclient.components.control_center.checking_accounts"),
             (None, false) => t("oneclient.components.control_center.no_account"),
@@ -453,6 +454,7 @@ impl Component for PanelFooter {
 
         let account = try_default_account(&current);
         let account_id = account.as_ref().map(|account| account.id);
+        let is_offline = account.as_ref().is_some_and(|a| a.is_offline());
         let username = account
             .as_ref()
             .map(|account| account.username.clone())
@@ -492,7 +494,11 @@ impl Component for PanelFooter {
                         el.child(
                             footer_action(
                                 IconType::LogOut01,
-                                t("oneclient.components.control_center.sign_out"),
+                                if is_offline {
+                                    t("oneclient.components.control_center.remove_offline")
+                                } else {
+                                    t("oneclient.components.control_center.sign_out")
+                                },
                                 colors::fg_primary(),
                             )
                             .on_press(move |_| confirming.set(true)),
@@ -534,9 +540,15 @@ impl Component for PanelFooter {
                                                 )
                                                 .child(
                                                     label()
-                                                        .text(t(
-                                                            "oneclient.components.control_center.sign_out_confirm.title",
-                                                        ))
+                                                        .text(if is_offline {
+                                                            t(
+                                                                "oneclient.components.control_center.remove_offline_confirm.title",
+                                                            )
+                                                        } else {
+                                                            t(
+                                                                "oneclient.components.control_center.sign_out_confirm.title",
+                                                            )
+                                                        })
                                                         .font_size(text_size(16.))
                                                         .font_weight(FontWeight::SEMI_BOLD)
                                                         .color(colors::fg_primary()),
@@ -544,10 +556,17 @@ impl Component for PanelFooter {
                                         )
                                         .child(
                                             label()
-                                                .text(tf(
-                                                    "oneclient.components.control_center.sign_out_confirm.body",
-                                                    &[&username],
-                                                ))
+                                                .text(if is_offline {
+                                                    tf(
+                                                        "oneclient.components.control_center.remove_offline_confirm.body",
+                                                        &[&username],
+                                                    )
+                                                } else {
+                                                    tf(
+                                                        "oneclient.components.control_center.sign_out_confirm.body",
+                                                        &[&username],
+                                                    )
+                                                })
                                                 .font_size(text_size(12.))
                                                 .max_lines(4)
                                                 .width(Size::fill())
@@ -570,9 +589,15 @@ impl Component for PanelFooter {
                                                 .child(
                                                     Button::new()
                                                         .danger()
-                                                        .text(t(
-                                                            "oneclient.components.control_center.sign_out",
-                                                        ))
+                                                        .text(if is_offline {
+                                                            t(
+                                                                "oneclient.components.control_center.remove_offline",
+                                                            )
+                                                        } else {
+                                                            t(
+                                                                "oneclient.components.control_center.sign_out",
+                                                            )
+                                                        })
                                                         .on_press(confirm_sign_out),
                                                 ),
                                         ),

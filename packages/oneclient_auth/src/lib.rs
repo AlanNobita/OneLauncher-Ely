@@ -9,6 +9,7 @@ mod msa;
 mod offline;
 mod service;
 mod store;
+mod yggdrasil;
 
 pub use data::{
     AccountKind, BrowserLogin, DeviceCodeLogin, MicrosoftLoginSession, MinecraftAccount,
@@ -19,3 +20,7 @@ pub use msa::PendingBrowserLogin;
 pub use offline::{offline_account, offline_uuid, validate_offline_username};
 pub use service::{AuthService, MICROSOFT_LOGIN_PROGRESS};
 pub use store::CredentialsStore;
+pub use yggdrasil::{
+    AUTHLIB_DOWNLOAD_API, ELY_API_URL, ELY_METADATA_URL, authenticate_ely_by,
+    ensure_authlib_injector, prefetched_metadata, refresh_ely_by, validate_ely_by,
+};

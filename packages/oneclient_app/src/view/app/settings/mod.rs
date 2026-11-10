@@ -14,6 +14,7 @@ mod theme_editor;
 use freya::prelude::*;
 
 pub use accounts::SettingsAccounts;
+pub(crate) use accounts::offline_dialog;
 pub use apis::SettingsApis;
 pub use appearance::SettingsAppearance;
 pub(crate) use appearance::theme_cards;
