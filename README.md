@@ -8,6 +8,7 @@ It adds:
 - **Ely.by accounts** — free community authentication & skin server with visible online skins/capes on Ely.by-enabled servers
 - **Linux builds** — `.deb` and AppImage plus Windows NSIS installer, produced by GitHub Actions
 - Microsoft accounts still work exactly as before
+- **Local texture backend** — stores 64–2048px square skins and 2:1 HD capes (up to 2048×1024) in launcher metadata; the in-game loader path is prepared for `CustomSkinLoader` compatibility
 
 **Official project:** please download the official launcher here: https://github.com/Polyfrost/OneLauncher
 This repository exists for people who specifically want the offline/Ely.by features in a community build.
@@ -22,7 +23,7 @@ Download the latest release from the [Releases page](https://github.com/AlanNobi
 | Debian / Ubuntu / Mint | Download `*.deb`, then `sudo apt install ./onelauncher-ely_*_amd64.deb` |
 | Other Linux (x86_64) | Download `*.AppImage`, `chmod +x`, run it |
 
-Windows unsigned builds are expected. Verify checksums below if you're cautious.
+Windows unsigned builds are expected. Verify checksums below if you're cautious. The Windows installer and Linux AppImage can self-update from the GitHub Releases channel; the `.deb` package still requires a manual package upgrade.
 
 ## Verify checksums
 
@@ -58,6 +59,15 @@ Ely.by accounts:
 - Login with your Ely.by username/email + password (TOTP supported)
 - The launcher downloads and signature-checks `authlib-injector.jar` on first launch
 - Visible skins/capes on Ely.by servers
+
+Local textures:
+- Skins: PNG square from 64×64 to 2048×2048
+- Capes: PNG 2:1 from 64×32 to 2048×1024
+- Launcher stores them under `metadata/skins/<uuid>.png` and `metadata/capes/<uuid>.png`
+- To see them in game, open **Settings → Launcher → Install in-game skin support**. Before launch, the launcher downloads and links the compatible CustomSkinLoader, 3D Skin Layers, and the required Fabric bridge from Modrinth.
+- If the toggle is off, textures are still stored and shown in launcher preview, but no mods are downloaded or installed.
+- These downloads use the normal Modrinth package flow and are shared with the cluster’s mods folder.
+
 
 ## Building from source
 

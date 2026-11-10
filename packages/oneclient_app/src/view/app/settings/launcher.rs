@@ -43,6 +43,11 @@ impl Component for SettingsLauncher {
             move || v
         });
 
+        let local_skin_mods = use_state({
+            let v = settings.auto_install_local_skin_mods;
+            move || v
+        });
+
         let run_in_background = use_state({
             let v = settings.run_in_background;
             move || v
@@ -68,6 +73,7 @@ impl Component for SettingsLauncher {
             let discord = *discord_rpc.read();
             let crash = *crash_reporting.read();
             let maximized = *start_maximized.read();
+            let local_skin_mods = *local_skin_mods.read();
             let background = *run_in_background.read();
             let tray = *show_tray_icon.read();
             let behaviour = *launch_behaviour.read();
@@ -80,6 +86,7 @@ impl Component for SettingsLauncher {
                 next.discord_enabled = discord;
                 next.crash_reporting = crash;
                 next.start_maximized = maximized;
+                next.auto_install_local_skin_mods = local_skin_mods;
                 next.run_in_background = background;
                 next.show_tray_icon = tray;
                 next.launch_behaviour = behaviour;
@@ -110,6 +117,16 @@ impl Component for SettingsLauncher {
                 t("oneclient.settings.launcher.discord_rpc.title"),
                 t("oneclient.settings.launcher.discord_rpc.description"),
                 resettable(toggle(discord_rpc), discord_rpc, defaults.discord_enabled),
+            ))
+            .child(settings_row(
+                IconType::PaintPour,
+                t("oneclient.settings.launcher.local_skin_mods.title"),
+                t("oneclient.settings.launcher.local_skin_mods.description"),
+                resettable(
+                    toggle(local_skin_mods),
+                    local_skin_mods,
+                    defaults.auto_install_local_skin_mods,
+                ),
             ))
             .child(settings_row(
                 IconType::AlertTriangle,

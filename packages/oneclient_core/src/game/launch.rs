@@ -231,6 +231,8 @@ async fn start(
         }
     };
 
+    crate::game::prepare_local_skin_mods(state, &cluster, account.id).await;
+
     let global = state.settings.read().global_game_settings.clone();
     let profile = state.clusters.resolve_settings(&global, &cluster).await?;
 
@@ -382,6 +384,12 @@ async fn start(
 
     if !dedicated {
         crate::game::link_cluster_logs(&cluster, &cwd).await;
+    }
+
+    if let Err(err) =
+        crate::game::prepare_local_skin_files(&cwd, &account.username, account.id).await
+    {
+        tracing::warn!(cluster_id, error = %err, "failed to sync local skin and cape files");
     }
 
     let client_jar = paths::versions_dir()?

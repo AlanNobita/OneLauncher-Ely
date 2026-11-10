@@ -70,6 +70,9 @@ jobs:
 
       - name: Package installer and bundles
         shell: bash
+        env:
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY }}
+          CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD: ${{ secrets.CARGO_PACKAGER_SIGN_PRIVATE_KEY_PASSWORD }}
         run: |
           ARGS="--release --formats ${{ matrix.formats }}"
           cargo packager $ARGS --verbose
@@ -81,7 +84,7 @@ jobs:
           shopt -s nullglob globstar
           {
             echo 'files<<EOF'
-            find target/release -maxdepth 1 -type f \( -name '*-setup.exe' -o -name '*.deb' -o -name '*.AppImage' \) -print
+            find target/release -maxdepth 1 -type f \( -name '*-setup.exe' -o -name '*.deb' -o -name '*.AppImage' -o -name '*.sig' \) -print
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -102,6 +105,61 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
+
+      - name: Generate updater metadata
+        shell: bash
+        env:
+          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import datetime, json, pathlib
+
+          root = pathlib.Path('dist')
+          files = [path for path in root.rglob('*') if path.is_file()]
+
+          def one(predicate, description):
+              matches = [path for path in files if predicate(path)]
+              if len(matches) != 1:
+                  raise SystemExit(f'expected exactly one {description}; found {matches}')
+              return matches[0]
+
+          appimage = one(lambda p: p.name.endswith('.AppImage'), 'AppImage')
+          installer = one(lambda p: p.name.endswith('-setup.exe'), 'Windows NSIS installer')
+          appimage_sig = appimage.with_name(appimage.name + '.sig')
+          installer_sig = installer.with_name(installer.name + '.sig')
+
+          if not appimage_sig.is_file():
+              raise SystemExit(f'missing signature: {appimage_sig}')
+          if not installer_sig.is_file():
+              raise SystemExit(f'missing signature: {installer_sig}')
+
+          tag = __import__('os').environ['TAG']
+          repository = __import__('os').environ['REPOSITORY']
+          version = tag[1:] if tag.startswith('v') else tag
+          base = f'https://github.com/{repository}/releases/download/{tag}'
+          now = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+
+          metadata = {
+              'version': version,
+              'notes': 'OneLauncher Ely update. See the release notes for the full changelog.',
+              'pub_date': now,
+              'platforms': {
+                  'linux-x86_64': {
+                      'signature': appimage_sig.read_text(),
+                      'url': f'{base}/{appimage.name}',
+                      'format': 'appimage',
+                  },
+                  'windows-x86_64': {
+                      'signature': installer_sig.read_text(),
+                      'url': f'{base}/{installer.name}',
+                      'format': 'nsis',
+                  },
+              },
+          }
+          (root / 'latest.json').write_text(json.dumps(metadata, separators=(',', ':')) + '\n')
+          print(f'write latest.json for {version}')
+          PY
 
       - name: Generate checksums
         shell: bash

@@ -16,6 +16,7 @@ use crate::hooks::{
     use_add_ely_by_account, use_add_offline_account, use_current_account, use_refresh_account,
     use_remove_account, use_set_default_account,
 };
+use crate::hooks::use_dispatch;
 use crate::i18n::t;
 use crate::theme::{colors, rounded, text_size};
 use crate::ui::border_all_color;
@@ -46,6 +47,7 @@ impl Component for SettingsAccounts {
         let mut closing_offline = use_state(|| false);
 
         let mut ely_username = use_state(String::new);
+        let local_skin_revision = use_state(|| 0u64);
         let mut ely_password = use_state(String::new);
         let mut ely_totp = use_state(String::new);
         let mut show_ely = use_state(|| false);
@@ -150,6 +152,7 @@ impl Component for SettingsAccounts {
                     sign_in: msa.clone(),
                     ely_username,
                     show_ely,
+                    local_skin_revision,
                 }
                 .into_element()
             })
@@ -161,6 +164,7 @@ impl Component for SettingsAccounts {
         settings_page()
             .child(hero(
                 default_account,
+                *local_skin_revision.read(),
                 msa.pending,
                 msa.error.clone(),
                 move |_| show_offline.set(true),
@@ -202,6 +206,7 @@ impl Component for SettingsAccounts {
 
 fn hero(
     account: Option<MinecraftAccount>,
+    local_skin_revision: u64,
     microsoft_pending: bool,
     error: Option<String>,
     on_open_offline: impl FnMut(Event<PressEventData>) + 'static,
@@ -229,7 +234,10 @@ fn hero(
         .padding(Gaps::new_all(16.))
         .corner_radius(rounded(12.))
         .background(colors::page_elevated())
-        .child(model_frame(account.as_ref().map(|account| account.id)))
+        .child(model_frame(
+            account.as_ref().map(|account| account.id),
+            local_skin_revision,
+        ))
         .child(
             rect()
                 .vertical()
@@ -309,7 +317,7 @@ fn hero(
         .into_element()
 }
 
-fn model_frame(id: Option<Uuid>) -> impl IntoElement {
+fn model_frame(id: Option<Uuid>, local_skin_revision: u64) -> impl IntoElement {
     rect()
         .vertical()
         .cross_align(Alignment::Center)
@@ -326,6 +334,8 @@ fn model_frame(id: Option<Uuid>) -> impl IntoElement {
                 .child(match id {
                     Some(id) => PlayerModel::new(id)
                         .yaw(-0.5)
+                        .local_skin(local_skin_revision)
+                        .cape(crate::hooks::use_player_cape(&id.to_string()))
                         .width(Size::fill())
                         .height(Size::fill())
                         .into_element(),
@@ -605,6 +615,7 @@ struct AccountRow {
     sign_in: MicrosoftLogin,
     ely_username: State<String>,
     show_ely: State<bool>,
+    local_skin_revision: State<u64>,
 }
 
 impl PartialEq for AccountRow {
@@ -630,6 +641,7 @@ impl Component for AccountRow {
         let set_default = self.set_default;
         let remove = self.remove;
         let refresh = self.refresh;
+        let dispatch = use_dispatch();
 
         let is_microsoft = self.kind == AccountKind::Microsoft;
         let is_token_account = is_microsoft || self.kind == AccountKind::ElyBy;
@@ -640,6 +652,7 @@ impl Component for AccountRow {
         let sign_in = self.sign_in.clone();
 
         let mut refreshing = use_state(|| false);
+        let local_skin_revision = self.local_skin_revision;
         let is_refreshing = *refreshing.read();
 
         let spin = use_animation(|conf| {
@@ -662,6 +675,118 @@ impl Component for AccountRow {
             spin.get().value()
         } else {
             0.
+        };
+
+        let skin_dispatch = dispatch.clone();
+        let set_local_skin = move |_| {
+            let id = id;
+            let mut local_skin_revision = local_skin_revision;
+            let dispatch = skin_dispatch.clone();
+            spawn(async move {
+                let handle = match rfd::AsyncFileDialog::new()
+                    .set_title(t("oneclient.settings.accounts.local_skin.pick_title"))
+                    .add_filter("PNG image", &["png"])
+                    .pick_file()
+                    .await
+                {
+                    Some(handle) => handle,
+                    None => return,
+                };
+
+                let result = async {
+                    let bytes = tokio::fs::read(handle.path())
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    crate::hooks::validate_local_skin_png(&bytes)
+                        .map_err(|err| err.to_string())?;
+                    let path = oneclient_common::paths::local_skin_file(&id.to_string())
+                        .map_err(|err| err.to_string())?;
+                    if let Some(parent) = path.parent() {
+                        polyio::create_dir_all(parent)
+                            .await
+                            .map_err(|err| err.to_string())?;
+                    }
+                    tokio::fs::write(&path, bytes)
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    Ok::<_, String>(())
+                }
+                .await;
+
+                match result {
+                    Ok(()) => {
+                        let next = *local_skin_revision.peek() + 1;
+                        local_skin_revision.set(next);
+                        dispatch
+                            .notify(t("oneclient.settings.accounts.local_skin.saved"))
+                            .body(t("oneclient.settings.accounts.local_skin.saved_body").to_string())
+                            .send();
+                    }
+                    Err(err) => {
+                        dispatch
+                            .notify(t("oneclient.settings.accounts.local_skin.failed"))
+                            .body(err)
+                            .error()
+                            .send();
+                    }
+                }
+            });
+        };
+
+        let cape_dispatch = dispatch.clone();
+        let set_local_cape = move |_| {
+            let id = id;
+            let mut local_skin_revision = local_skin_revision;
+            let dispatch = cape_dispatch.clone();
+            spawn(async move {
+                let handle = match rfd::AsyncFileDialog::new()
+                    .set_title(t("oneclient.settings.accounts.local_cape.pick_title"))
+                    .add_filter("PNG image", &["png"])
+                    .pick_file()
+                    .await
+                {
+                    Some(handle) => handle,
+                    None => return,
+                };
+
+                let result = async {
+                    let bytes = tokio::fs::read(handle.path())
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    crate::hooks::validate_local_cape_png(&bytes)
+                        .map_err(|err| err.to_string())?;
+                    let path = oneclient_common::paths::local_cape_file(&id.to_string())
+                        .map_err(|err| err.to_string())?;
+                    if let Some(parent) = path.parent() {
+                        polyio::create_dir_all(parent)
+                            .await
+                            .map_err(|err| err.to_string())?;
+                    }
+                    tokio::fs::write(&path, bytes)
+                        .await
+                        .map_err(|err| err.to_string())?;
+                    Ok::<_, String>(())
+                }
+                .await;
+
+                match result {
+                    Ok(()) => {
+                        let next = *local_skin_revision.peek() + 1;
+                        local_skin_revision.set(next);
+                        dispatch
+                            .notify(t("oneclient.settings.accounts.local_cape.saved"))
+                            .body(t("oneclient.settings.accounts.local_cape.saved_body").to_string())
+                            .send();
+                    }
+                    Err(err) => {
+                        dispatch
+                            .notify(t("oneclient.settings.accounts.local_cape.failed"))
+                            .body(err)
+                            .error()
+                            .send();
+                    }
+                }
+            });
         };
 
         let border_color = if signed_out {
@@ -696,6 +821,7 @@ impl Component for AccountRow {
             .child(
                 rect().opacity(identity_opacity).child(
                     Avatar::new(id.to_string())
+                        .local_skin(*local_skin_revision.read())
                         .width(Size::px(AVATAR_SIZE_PX))
                         .height(Size::px(AVATAR_SIZE_PX)),
                 ),
@@ -789,6 +915,38 @@ impl Component for AccountRow {
                                     colors::fg_secondary()
                                 }),
                         ),
+                    )
+                    .into_element()
+            }))
+            .maybe_child((self.kind == AccountKind::Offline).then(|| {
+                Button::new()
+                    .ghost()
+                    .icon()
+                    .tooltip(t("oneclient.settings.accounts.local_skin.tooltip"))
+                    .on_press(move |e: Event<PressEventData>| {
+                        e.stop_propagation();
+                        set_local_skin(e);
+                    })
+                    .child(
+                        Icon::new(IconType::PaintPour)
+                            .size(18.)
+                            .color(colors::fg_secondary()),
+                    )
+                    .into_element()
+            }))
+            .maybe_child((self.kind == AccountKind::Offline).then(|| {
+                Button::new()
+                    .ghost()
+                    .icon()
+                    .tooltip(t("oneclient.settings.accounts.local_cape.tooltip"))
+                    .on_press(move |e: Event<PressEventData>| {
+                        e.stop_propagation();
+                        set_local_cape(e);
+                    })
+                    .child(
+                        Icon::new(IconType::Square)
+                            .size(18.)
+                            .color(colors::fg_secondary()),
                     )
                     .into_element()
             }))

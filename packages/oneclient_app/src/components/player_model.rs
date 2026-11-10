@@ -44,6 +44,7 @@ pub struct PlayerModel {
     zoom: f32,
     focus_y: f32,
     draggable: bool,
+    local_skin_revision: u64,
 }
 
 impl PlayerModel {
@@ -62,7 +63,13 @@ impl PlayerModel {
             zoom: 1.0,
             focus_y: 0.0,
             draggable: true,
+            local_skin_revision: 0,
         }
+    }
+
+    pub fn local_skin(mut self, revision: u64) -> Self {
+        self.local_skin_revision = revision;
+        self
     }
 
     pub fn skin(mut self, skin: Option<(Bytes, bool)>) -> Self {

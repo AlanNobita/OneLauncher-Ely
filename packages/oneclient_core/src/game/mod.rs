@@ -5,6 +5,8 @@ mod game_options;
 pub mod gpu;
 mod heal;
 mod launch;
+mod local_skin;
+mod local_skin_mods;
 mod log_replay;
 pub(crate) mod natives;
 mod process;
@@ -50,6 +52,8 @@ pub use process::{
 };
 pub use reattach::recover_sessions;
 pub(crate) use shared_dir::lock_mods_sync;
+pub(crate) use local_skin::prepare_local_skin_files;
+pub(crate) use local_skin_mods::prepare_local_skin_mods;
 pub use shared_dir::{
     DuplicateMods, dematerialize_content, import_manual_content, join_shared_folder,
     leave_shared_folder, link_cluster_logs, materialize_content, shadowed_bundle_mods,

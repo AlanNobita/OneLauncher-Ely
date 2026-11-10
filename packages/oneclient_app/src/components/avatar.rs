@@ -16,6 +16,7 @@ pub struct Avatar {
     uuid: String,
     size: f32,
     radius: Option<f32>,
+    local_skin_revision: u64,
     layout: LayoutData,
 }
 
@@ -25,8 +26,14 @@ impl Avatar {
             uuid: uuid.into(),
             size: AVATAR_SIZE,
             radius: None,
+            local_skin_revision: 0,
             layout: LayoutData::default(),
         }
+    }
+
+    pub fn local_skin(mut self, revision: u64) -> Self {
+        self.local_skin_revision = revision;
+        self
     }
 
     pub fn size(mut self, size: f32) -> Self {

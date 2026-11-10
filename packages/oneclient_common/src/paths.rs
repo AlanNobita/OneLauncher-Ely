@@ -268,6 +268,37 @@ pub fn assets_dir() -> PathsResult<PathBuf> {
     Ok(data_dir()?.join("metadata").join("assets"))
 }
 
+pub fn local_skins_dir() -> PathsResult<PathBuf> {
+    Ok(metadata_dir()?.join("skins"))
+}
+
+pub fn local_capes_dir() -> PathsResult<PathBuf> {
+    Ok(metadata_dir()?.join("capes"))
+}
+
+pub fn local_skin_file(uuid: &str) -> PathsResult<PathBuf> {
+    local_texture_file(uuid, false)
+}
+
+pub fn local_cape_file(uuid: &str) -> PathsResult<PathBuf> {
+    local_texture_file(uuid, true)
+}
+
+fn local_texture_file(uuid: &str, cape: bool) -> PathsResult<PathBuf> {
+    if uuid.is_empty()
+        || uuid.contains(['/', '\\'])
+        || uuid.contains("..")
+        || !uuid.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+    {
+        return Err(PathsError::DataDirUnavailable);
+    }
+    Ok(if cape {
+        local_capes_dir()?.join(format!("{uuid}.png"))
+    } else {
+        local_skins_dir()?.join(format!("{uuid}.png"))
+    })
+}
+
 pub fn assets_index_dir() -> PathsResult<PathBuf> {
     Ok(assets_dir()?.join("indexes"))
 }
