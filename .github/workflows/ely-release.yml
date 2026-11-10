@@ -99,7 +99,7 @@ jobs:
       contents: write
     steps:
       - name: Download artifacts
-        uses: actions/download-artifact@018cc2cc28b6b1a24154893c16b8c3aff5a9e888 # v6.0.0
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           path: dist
 
@@ -111,7 +111,7 @@ jobs:
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@a2d8a84e54925c81d4a28b903a363783da7cebec # v2.0.8
+        uses: softprops/action-gh-release@v2
         with:
           name: OneLauncher Ely ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
