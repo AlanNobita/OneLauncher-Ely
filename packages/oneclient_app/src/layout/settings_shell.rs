@@ -277,6 +277,16 @@ fn search_index() -> Vec<SearchItem> {
             route: Route::SettingsDeveloper {},
         },
         SearchItem {
+            id: "local_skins",
+            icon: IconType::PaintPour,
+            title: t("oneclient.layout.settings.tab.skins"),
+            description: t("oneclient.layout.search.skins.description"),
+            keywords: &[
+                "skin", "cape", "offline", "local", "texture", "png", "custom", "3d",
+            ],
+            route: Route::SettingsSkins {},
+        },
+        SearchItem {
             id: "nav.accounts",
             icon: IconType::Users01,
             title: t("oneclient.layout.settings.tab.accounts"),
@@ -298,6 +308,7 @@ fn search_index() -> Vec<SearchItem> {
 #[derive(PartialEq, Clone, Copy)]
 pub enum SettingsTab {
     MinecraftSettings,
+    Skins,
     Accounts,
     LauncherSettings,
     Java,
@@ -313,6 +324,7 @@ impl SettingsTab {
     fn label(self) -> &'static str {
         match self {
             Self::MinecraftSettings => t("oneclient.layout.settings.tab.minecraft"),
+            Self::Skins => t("oneclient.layout.settings.tab.skins"),
             Self::Accounts => t("oneclient.layout.settings.tab.accounts"),
             Self::LauncherSettings => t("oneclient.layout.settings.tab.launcher"),
             Self::Java => "Java",
@@ -328,6 +340,7 @@ impl SettingsTab {
     fn icon(self) -> IconType {
         match self {
             Self::MinecraftSettings => IconType::Sliders04,
+            Self::Skins => IconType::PaintPour,
             Self::Accounts => IconType::Users01,
             Self::LauncherSettings => IconType::Rocket02,
             Self::Java => IconType::CodeSnippet02,
@@ -343,6 +356,7 @@ impl SettingsTab {
     fn route(self) -> Option<Route> {
         match self {
             Self::MinecraftSettings => Some(Route::SettingsMinecraft {}),
+            Self::Skins => Some(Route::SettingsSkins {}),
             Self::Accounts => Some(Route::SettingsAccounts {}),
             Self::LauncherSettings => Some(Route::SettingsLauncher {}),
             Self::Java => Some(Route::SettingsJava {}),
@@ -376,7 +390,7 @@ fn groups() -> [SettingsGroup; 3] {
         },
         SettingsGroup {
             label: t("oneclient.layout.settings.group.game"),
-            tabs: &[SettingsTab::MinecraftSettings, SettingsTab::Accounts],
+            tabs: &[SettingsTab::MinecraftSettings, SettingsTab::Skins, SettingsTab::Accounts],
         },
         SettingsGroup {
             label: t("oneclient.layout.settings.group.about"),
@@ -391,6 +405,7 @@ pub struct SettingsShell;
 fn route_tab(route: &Route) -> SettingsTab {
     match route {
         Route::SettingsMinecraft {} => SettingsTab::MinecraftSettings,
+        Route::SettingsSkins {} => SettingsTab::Skins,
         Route::SettingsAccounts {} => SettingsTab::Accounts,
         Route::SettingsLauncher {} => SettingsTab::LauncherSettings,
         Route::SettingsJava {} => SettingsTab::Java,

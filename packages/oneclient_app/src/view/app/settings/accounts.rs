@@ -5,6 +5,7 @@ use freya::query::{MutationCapability, MutationStateData, UseMutation};
 use oneclient_auth::{AccountKind, MinecraftAccount};
 use uuid::Uuid;
 
+use super::local_texture::{LocalTexture, pick_and_save};
 use super::{section_header, settings_page};
 use crate::components::{
     Avatar, Button, Icon, IconType, MicrosoftLogin, OverlayPopup, PlayerModel, TextInput,
@@ -679,42 +680,11 @@ impl Component for AccountRow {
 
         let skin_dispatch = dispatch.clone();
         let set_local_skin = move |_| {
-            let id = id;
             let mut local_skin_revision = local_skin_revision;
             let dispatch = skin_dispatch.clone();
             spawn(async move {
-                let handle = match rfd::AsyncFileDialog::new()
-                    .set_title(t("oneclient.settings.accounts.local_skin.pick_title"))
-                    .add_filter("PNG image", &["png"])
-                    .pick_file()
-                    .await
-                {
-                    Some(handle) => handle,
-                    None => return,
-                };
-
-                let result = async {
-                    let bytes = tokio::fs::read(handle.path())
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    crate::hooks::validate_local_skin_png(&bytes)
-                        .map_err(|err| err.to_string())?;
-                    let path = oneclient_common::paths::local_skin_file(&id.to_string())
-                        .map_err(|err| err.to_string())?;
-                    if let Some(parent) = path.parent() {
-                        polyio::create_dir_all(parent)
-                            .await
-                            .map_err(|err| err.to_string())?;
-                    }
-                    tokio::fs::write(&path, bytes)
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    Ok::<_, String>(())
-                }
-                .await;
-
-                match result {
-                    Ok(()) => {
+                match pick_and_save(LocalTexture::Skin, id).await {
+                    Ok(true) => {
                         let next = *local_skin_revision.peek() + 1;
                         local_skin_revision.set(next);
                         dispatch
@@ -722,6 +692,7 @@ impl Component for AccountRow {
                             .body(t("oneclient.settings.accounts.local_skin.saved_body").to_string())
                             .send();
                     }
+                    Ok(false) => {}
                     Err(err) => {
                         dispatch
                             .notify(t("oneclient.settings.accounts.local_skin.failed"))
@@ -735,42 +706,11 @@ impl Component for AccountRow {
 
         let cape_dispatch = dispatch.clone();
         let set_local_cape = move |_| {
-            let id = id;
             let mut local_skin_revision = local_skin_revision;
             let dispatch = cape_dispatch.clone();
             spawn(async move {
-                let handle = match rfd::AsyncFileDialog::new()
-                    .set_title(t("oneclient.settings.accounts.local_cape.pick_title"))
-                    .add_filter("PNG image", &["png"])
-                    .pick_file()
-                    .await
-                {
-                    Some(handle) => handle,
-                    None => return,
-                };
-
-                let result = async {
-                    let bytes = tokio::fs::read(handle.path())
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    crate::hooks::validate_local_cape_png(&bytes)
-                        .map_err(|err| err.to_string())?;
-                    let path = oneclient_common::paths::local_cape_file(&id.to_string())
-                        .map_err(|err| err.to_string())?;
-                    if let Some(parent) = path.parent() {
-                        polyio::create_dir_all(parent)
-                            .await
-                            .map_err(|err| err.to_string())?;
-                    }
-                    tokio::fs::write(&path, bytes)
-                        .await
-                        .map_err(|err| err.to_string())?;
-                    Ok::<_, String>(())
-                }
-                .await;
-
-                match result {
-                    Ok(()) => {
+                match pick_and_save(LocalTexture::Cape, id).await {
+                    Ok(true) => {
                         let next = *local_skin_revision.peek() + 1;
                         local_skin_revision.set(next);
                         dispatch
@@ -778,6 +718,7 @@ impl Component for AccountRow {
                             .body(t("oneclient.settings.accounts.local_cape.saved_body").to_string())
                             .send();
                     }
+                    Ok(false) => {}
                     Err(err) => {
                         dispatch
                             .notify(t("oneclient.settings.accounts.local_cape.failed"))
@@ -918,7 +859,7 @@ impl Component for AccountRow {
                     )
                     .into_element()
             }))
-            .maybe_child((self.kind == AccountKind::Offline).then(|| {
+            .maybe_child(true.then(|| {
                 Button::new()
                     .ghost()
                     .icon()
@@ -934,7 +875,7 @@ impl Component for AccountRow {
                     )
                     .into_element()
             }))
-            .maybe_child((self.kind == AccountKind::Offline).then(|| {
+            .maybe_child(true.then(|| {
                 Button::new()
                     .ghost()
                     .icon()

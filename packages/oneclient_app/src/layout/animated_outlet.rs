@@ -24,6 +24,7 @@ fn is_sidebar_route(route: &Route) -> bool {
             | Route::SettingsThemeEditor {}
             | Route::SettingsMinecraft {}
             | Route::SettingsAccounts {}
+            | Route::SettingsSkins {}
             | Route::SettingsLauncher {}
             | Route::SettingsJava {}
             | Route::SettingsStorage {}

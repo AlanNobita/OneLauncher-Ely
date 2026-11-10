@@ -1,5 +1,6 @@
 mod accounts;
 mod appearance;
+mod local_texture;
 
 mod apis;
 mod changelog;
@@ -9,11 +10,13 @@ mod language;
 mod launcher;
 mod minecraft;
 mod storage;
+mod skins;
 mod theme_editor;
 
 use freya::prelude::*;
 
 pub use accounts::SettingsAccounts;
+pub use skins::SettingsSkins;
 pub(crate) use accounts::offline_dialog;
 pub use apis::SettingsApis;
 pub use appearance::SettingsAppearance;

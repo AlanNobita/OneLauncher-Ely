@@ -50,7 +50,16 @@ pub fn local_cape_bytes(uuid: &str) -> Option<Bytes> {
 }
 
 pub fn use_player_cape(uuid: &str) -> Option<Bytes> {
-    local_cape_bytes(uuid)
+    if let Some(local) = local_cape_bytes(uuid) {
+        return Some(local);
+    }
+
+    let profile = super::use_player_profile(uuid.to_string(), None::<String>);
+    let cape_url = crate::hooks::settled_or_loading(&profile)
+        .and_then(|profile| profile.cape_url.clone());
+    let cape_query = super::use_cached_image(cape_url.clone(), 64);
+
+    crate::hooks::loaded_image(cape_url.as_deref(), &cape_query).map(|(_, bytes)| bytes)
 }
 
 fn normalize_local_texture(bytes: Bytes, width: u32, height: u32) -> Option<Bytes> {

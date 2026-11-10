@@ -130,10 +130,10 @@ fn auth_headers(access_token: &str) -> [(&'static str, String); 1] {
     [("Authorization", format!("Bearer {access_token}"))]
 }
 
-#[tracing::instrument(level = "debug", skip(client))]
-pub async fn fetch_player_profile(
+async fn fetch_profile_at(
     client: &RequestClient,
     uuid: &str,
+    endpoint: &str,
 ) -> McResult<MojangPlayerProfile> {
     #[derive(Deserialize)]
     struct Properties {
@@ -174,9 +174,8 @@ pub async fn fetch_player_profile(
     }
 
     let uuid = normalize_uuid(uuid);
-    let url = format!("https://sessionserver.mojang.com/session/minecraft/profile/{uuid}")
-        .parse()
-        .map_err(McError::Url)?;
+    let url = format!("{endpoint}/{uuid}").parse().map_err(McError::Url)?;
+
 
     let response = client
         .send_as::<Response>(reqwest::Request::new(Method::GET, url))
@@ -208,6 +207,32 @@ pub async fn fetch_player_profile(
         skin_url: decoded.skin.as_ref().map(|s| normalize_texture_url(&s.url)),
         cape_url: decoded.cape.as_ref().map(|c| normalize_texture_url(&c.url)),
     })
+}
+
+#[tracing::instrument(level = "debug", skip(client))]
+pub async fn fetch_player_profile(
+    client: &RequestClient,
+    uuid: &str,
+) -> McResult<MojangPlayerProfile> {
+    match fetch_profile_at(
+        client,
+        uuid,
+        "https://sessionserver.mojang.com/session/minecraft/profile",
+    )
+    .await
+    {
+        Ok(profile) => Ok(profile),
+        Err(mojang_err) => {
+            fetch_ely_profile(client, uuid).await.map_err(|_| mojang_err)
+        }
+    }
+}
+
+async fn fetch_ely_profile(
+    client: &RequestClient,
+    uuid: &str,
+) -> McResult<MojangPlayerProfile> {
+    fetch_profile_at(client, uuid, "https://authserver.ely.by/session/profile").await
 }
 
 #[tracing::instrument(level = "debug", skip(client, access_token))]

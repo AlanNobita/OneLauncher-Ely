@@ -20,7 +20,7 @@ use crate::view::{
         settings::{
             SettingsAccounts, SettingsApis, SettingsAppearance, SettingsChangelog,
             SettingsDeveloper, SettingsJava, SettingsLanguage, SettingsLauncher, SettingsMinecraft,
-            SettingsStorage, SettingsThemeEditor,
+            SettingsSkins, SettingsStorage, SettingsThemeEditor,
         },
     },
     onboarding::{
@@ -114,6 +114,8 @@ pub enum Route {
                 SettingsMinecraft {},
                 #[route("/app/settings/accounts")]
                 SettingsAccounts {},
+                #[route("/app/settings/skins")]
+                SettingsSkins {},
                 #[route("/app/settings/launcher")]
                 SettingsLauncher {},
                 #[route("/app/settings/java")]
@@ -172,6 +174,7 @@ impl Route {
             Route::SettingsThemeEditor { .. } => t("oneclient.routes.settings_theme_editor"),
             Route::SettingsMinecraft { .. } => t("oneclient.routes.settings_minecraft"),
             Route::SettingsAccounts { .. } => t("oneclient.routes.settings_accounts"),
+            Route::SettingsSkins { .. } => t("oneclient.routes.settings_skins"),
             Route::SettingsLauncher { .. } => t("oneclient.routes.settings_launcher"),
             Route::SettingsJava { .. } => t("oneclient.routes.settings_java"),
             Route::SettingsStorage { .. } => t("oneclient.routes.settings_storage"),
