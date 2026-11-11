@@ -18,6 +18,7 @@ use crate::{
 };
 
 const MOJANG_JOIN_URL: &str = "https://sessionserver.mojang.com/session/minecraft/join";
+const ELY_JOIN_URL: &str = "https://authserver.ely.by/session/join";
 
 const PING_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -384,10 +385,11 @@ fn next_delay(outcome: &Outcome, delay: Duration) -> Duration {
 }
 
 pub(crate) fn usable(account: &MinecraftAccount, allowed: bool) -> bool {
-    allowed
-        && account.is_microsoft()
-        && !account.needs_sign_in()
-        && !account.access_token.is_empty()
+    if !allowed || !account.is_social() {
+        return false;
+    }
+    // Online accounts must carry a token; offline accounts never have one.
+    account.is_offline() || !account.access_token.is_empty()
 }
 
 async fn account_changed(auth: &oneclient_auth::AuthService, id: Uuid) -> bool {
@@ -408,22 +410,35 @@ pub(crate) async fn login(
 
     let server_id = generate_server_id();
 
-    let join = client
-        .post(MOJANG_JOIN_URL)
-        .timeout(REQUEST_TIMEOUT)
-        .header("Accept", "application/json")
-        .json(&serde_json::json!({
-            "accessToken": account.access_token,
-            "selectedProfile": account.id.simple().to_string(),
-            "serverId": server_id,
-        }))
-        .send()
-        .await?;
+    // Online accounts prove they own the session with their auth server's join
+    // call; offline accounts have no auth server to join, so the backend's
+    // private-instance allowlist decides who gets in.
+    match account.kind {
+        oneclient_auth::AccountKind::Microsoft | oneclient_auth::AccountKind::ElyBy => {
+            let join_url = match account.kind {
+                oneclient_auth::AccountKind::Microsoft => MOJANG_JOIN_URL,
+                _ => ELY_JOIN_URL,
+            };
 
-    if !join.status().is_success() {
-        return Err(PlusError::JoinRejected {
-            status: join.status().as_u16(),
-        });
+            let join = client
+                .post(join_url)
+                .timeout(REQUEST_TIMEOUT)
+                .header("Accept", "application/json")
+                .json(&serde_json::json!({
+                    "accessToken": account.access_token,
+                    "selectedProfile": account.id.simple().to_string(),
+                    "serverId": server_id,
+                }))
+                .send()
+                .await?;
+
+            if !join.status().is_success() {
+                return Err(PlusError::JoinRejected {
+                    status: join.status().as_u16(),
+                });
+            }
+        }
+        oneclient_auth::AccountKind::Offline => {}
     }
 
     let mut url = reqwest::Url::parse(&format!("{}/account/login", base_url()))?;
@@ -489,14 +504,18 @@ mod tests {
     }
 
     #[test]
-    fn only_a_signed_in_microsoft_account_with_a_token_is_usable() {
-        use oneclient_auth::AccountKind::{Microsoft, Offline};
+    fn every_signed_in_kind_is_usable_on_a_social_instance() {
+        use oneclient_auth::AccountKind::{ElyBy, Microsoft, Offline};
 
         assert!(usable(&account(Microsoft, "token", false), true));
+        assert!(usable(&account(ElyBy, "token", false), true));
+        assert!(usable(&account(Offline, "", false), true));
         assert!(!usable(&account(Microsoft, "token", false), false));
-        assert!(!usable(&account(Microsoft, "token", true), true));
+        assert!(!usable(&account(ElyBy, "token", false), false));
         assert!(!usable(&account(Microsoft, "", false), true));
-        assert!(!usable(&account(Offline, "token", false), true));
+        assert!(!usable(&account(ElyBy, "", false), true));
+        assert!(!usable(&account(Microsoft, "token", true), true));
+        assert!(!usable(&account(ElyBy, "token", true), true));
     }
 
     async fn ping_counting_server(close_after_pings: usize) -> (String, Arc<AtomicUsize>) {

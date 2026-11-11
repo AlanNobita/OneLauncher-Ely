@@ -46,6 +46,16 @@ impl MinecraftAccount {
         self.kind == AccountKind::ElyBy
     }
 
+    /// An account that can join social features on a self-hosted Poly+
+    /// instance: signed in, and either a verified online identity (Microsoft
+    /// or Ely.by) or an offline one the operator vouched for.
+    pub fn is_social(&self) -> bool {
+        matches!(
+            self.kind,
+            AccountKind::Microsoft | AccountKind::ElyBy | AccountKind::Offline
+        ) && !self.needs_sign_in()
+    }
+
     pub fn needs_sign_in(&self) -> bool {
         (self.is_microsoft() || self.is_ely_by()) && self.signed_out
     }

@@ -1667,7 +1667,7 @@ impl Actions {
 
     pub fn sync_chat_owner(&self, account: Option<&MinecraftAccount>) {
         let owner = account
-            .filter(|account| account.is_microsoft())
+            .filter(|account| account.is_social())
             .map(|account| account.id);
         let station = self.station();
         if station.peek().chat.owner == owner {

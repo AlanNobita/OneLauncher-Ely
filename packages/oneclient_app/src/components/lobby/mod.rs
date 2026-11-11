@@ -339,7 +339,7 @@ pub fn party_message(err: PlusError) -> String {
 
 fn renewing_owner(stored: Option<MinecraftAccount>, allowed: bool) -> Option<Uuid> {
     stored
-        .filter(|account| allowed && account.is_microsoft())
+        .filter(|account| allowed && account.is_social())
         .map(|account| account.id)
 }
 
@@ -353,10 +353,12 @@ async fn lobby_account() -> Result<MinecraftAccount, (Option<Uuid>, String)> {
             return Err((renewing_owner(stored, allowed), err.to_string()));
         }
     }
-    .filter(MinecraftAccount::is_microsoft)
+    .filter(MinecraftAccount::is_social)
     .filter(|_| allowed)
     .ok_or_else(|| (None, t("oneclient.wardrobe.account.signed_out").to_string()))?;
-    if account.needs_sign_in() || account.access_token.is_empty() {
+    if account.needs_sign_in()
+        || (!account.is_offline() && account.access_token.is_empty())
+    {
         return Err((None, t("oneclient.wardrobe.account.needs_sign_in").into()));
     }
     Ok(account)
@@ -413,7 +415,7 @@ pub fn act<T, F, Fut>(
 
 pub fn use_my_uuid() -> Option<Uuid> {
     try_default_account(&use_current_account())
-        .filter(MinecraftAccount::is_microsoft)
+        .filter(MinecraftAccount::is_social)
         .map(|account| account.id)
 }
 
@@ -518,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn a_failed_renewal_only_keeps_a_social_account() {
+    fn a_failed_renewal_keeps_a_social_account() {
         let account = |kind| MinecraftAccount {
             id: id(1),
             username: "player".to_string(),
@@ -526,15 +528,17 @@ mod tests {
             refresh_token: String::new(),
             client_token: String::new(),
             expires: Utc::now(),
-            kind,
             signed_out: false,
+            kind,
         };
         let microsoft = oneclient_auth::AccountKind::Microsoft;
+        let ely = oneclient_auth::AccountKind::ElyBy;
         let offline = oneclient_auth::AccountKind::Offline;
 
         assert_eq!(renewing_owner(Some(account(microsoft)), true), Some(id(1)));
+        assert_eq!(renewing_owner(Some(account(ely)), true), Some(id(1)));
+        assert_eq!(renewing_owner(Some(account(offline)), true), Some(id(1)));
         assert_eq!(renewing_owner(Some(account(microsoft)), false), None);
-        assert_eq!(renewing_owner(Some(account(offline)), true), None);
         assert_eq!(renewing_owner(None, true), None);
     }
 

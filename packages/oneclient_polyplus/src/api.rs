@@ -277,7 +277,7 @@ pub(crate) async fn send_to(
     if plus_blocked() {
         return Err(PlusError::ConsentRequired);
     }
-    if !account.is_microsoft() {
+    if !crate::session::usable(account, true) {
         return Err(PlusError::OfflineAccount);
     }
 
