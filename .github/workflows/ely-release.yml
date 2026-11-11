@@ -193,3 +193,8 @@ jobs:
             - Offline accounts (MD5 `OfflinePlayer:` UUID)
             - Ely.by accounts via authlib-injector
             - Debian/AppImage packaging
+            - Ely.by and offline accounts can use Poly+ social features (friends, chat, party, world hosting) against a self-hosted instance — set a custom Poly+ endpoint in Settings → APIs
+            - Mods can be disabled and removed straight from the Browse tab, including mods that came from a bundle
+
+            ### Fixed
+            - Setting a local skin or cape no longer crashes the launcher (a hook-order bug that left the app unable to start)
