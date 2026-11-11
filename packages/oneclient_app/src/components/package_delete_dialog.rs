@@ -55,6 +55,69 @@ pub fn use_shared_delete(
     (request, dialog)
 }
 
+/// The same confirmation for several artifacts at once one shared dialog for the
+/// whole batch names the package and the worst-case sharing count so the user
+/// confirms the bundle's removal, not each copy separately.
+pub fn use_shared_deletes(
+    cluster_id: i64,
+    delete: impl Into<EventHandler<Vec<String>>>,
+) -> (EventHandler<(String, Vec<String>)>, Option<Element>) {
+    let mut pending = use_state(|| None::<(String, Vec<String>, usize)>);
+    let delete = delete.into();
+
+    let request = {
+        let delete = delete.clone();
+        EventHandler::new_current(move |(name, hashes): (String, Vec<String>)| {
+            let delete = delete.clone();
+            if hashes.is_empty() {
+                return;
+            }
+            spawn(async move {
+                let mut shared = 0usize;
+                for hash in &hashes {
+                    let clusters = match crate::launcher::state() {
+                        Ok(state) => oneclient_core::clusters_sharing_artifact(
+                            cluster_id,
+                            hash,
+                            &state.services.content(),
+                        )
+                        .await
+                        .unwrap_or_else(|err| {
+                            tracing::warn!(%err, "could not check whether this package is shared");
+                            None
+                        }),
+                        Err(_) => None,
+                    };
+                    if let Some(count) = clusters {
+                        shared = shared.max(count);
+                    }
+                }
+                if shared > 1 {
+                    pending.set(Some((name, hashes, shared)));
+                } else {
+                    delete.call(hashes);
+                }
+            });
+        })
+    };
+
+    let dialog = pending.read().clone().map(|(name, hashes, clusters)| {
+        SharedPackageDeleteDialog {
+            name: name.clone(),
+            clusters,
+            on_cancel: (move |()| pending.set(None)).into(),
+            on_confirm: (move |()| {
+                delete.call(hashes.clone());
+                pending.set(None);
+            })
+            .into(),
+        }
+        .into_element()
+    });
+
+    (request, dialog)
+}
+
 #[derive(PartialEq)]
 struct SharedPackageDeleteDialog {
     name: String,

@@ -353,6 +353,7 @@
   "oneclient.bisect.starting": "Starting mod diagnostics",
   "oneclient.bisect.title": "Mod diagnostics",
   "oneclient.browser.common.active": "Active",
+  "oneclient.browser.common.disable": "Disable",
   "oneclient.browser.common.enable": "Enable",
   "oneclient.browser.common.enabling": "Enabling",
   "oneclient.browser.common.enabling_ellipsis": "Enabling...",

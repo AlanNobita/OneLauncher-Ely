@@ -1,47 +1,41 @@
 use super::*;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use freya::router::RouterContext;
 use oneclient_content::packages::types::ProjectSummary;
 use oneclient_content::packages::{ContentType, ProviderId};
-use oneclient_core::clusters::ModpackSource;
+use oneclient_core::{SeenStatus, clusters::ModpackSource};
 
-use crate::components::{Button, Icon, IconType};
+use crate::components::{
+    Button, Icon, IconType, PackageEntry, disable_request, guard_disable, run_guarded,
+    use_shared_deletes,
+};
 use crate::hooks::{
-    ALL_VERSIONS, ClusterAction, VERSIONS_PAGE_SIZE, content_type_for_slug, use_browser_compat,
-    use_cluster, use_dispatch, use_installs_snapshot, use_package_versions_when, version_list,
+    ALL_VERSIONS, ClusterAction, EssentialGuardKind, VERSIONS_PAGE_SIZE, content_type_for_slug,
+    disable_warnings, mutation_is_running, use_browser_compat, use_cluster, use_cluster_mutation,
+    use_disable_confirm, use_disable_warnings, use_dispatch, use_essential_guard,
+    use_installs_snapshot, use_package_versions_when, version_list,
 };
 use crate::i18n::{t, tf};
 use crate::routes::Route;
 use crate::theme::{colors, rounded, text_size};
 use crate::ui::border_all_color;
 use crate::view::app::browser::cluster_version;
+use crate::view::app::browser::{InstalledVersion, installed_badge};
 
 type InstalledMap = HashMap<(ProviderId, String), Installed>;
 
 /// Height of the install control, matched by the installed pill that replaces it
 const INSTALL_BUTTON_H: f32 = 28.;
 
-#[derive(Clone, PartialEq)]
-struct CardInstalled {
-    source: InstallSource,
-    enable: Option<ClusterAction>,
-}
+/// The card control mirrors the cluster list: a provenance pill, an enable or
+/// disable toggle, and a remove button that works for bundle-provided or
+/// hand-installed mods alike
+type CardInstalled = Installed;
 
-fn installed_for(
-    installed: &InstalledMap,
-    item: &ProjectSummary,
-    cluster_id: i64,
-) -> Option<CardInstalled> {
-    installed
-        .get(&(item.provider, item.id.clone()))
-        .map(|installed| CardInstalled {
-            source: installed.source,
-            enable: installed
-                .disabled_bundled()
-                .and_then(|version| version.enable_action(cluster_id)),
-        })
+fn installed_for(installed: &InstalledMap, item: &ProjectSummary) -> Option<CardInstalled> {
+    installed.get(&(item.provider, item.id.clone())).cloned()
 }
 
 pub(super) fn grid_row(
@@ -56,7 +50,7 @@ pub(super) fn grid_row(
     let fill = cols.saturating_sub(row.len());
     let installed: Vec<Option<CardInstalled>> = row
         .iter()
-        .map(|item| installed_for(installed, item, cluster_id))
+        .map(|item| installed_for(installed, item))
         .collect();
 
     rect()
@@ -256,7 +250,7 @@ pub(super) fn list_row(
     add_to_cluster: bool,
 ) -> impl IntoElement {
     ListRow {
-        installed: installed_for(installed, &item, cluster_id),
+        installed: installed_for(installed, &item),
         item,
         cluster_id,
         package_type: package_type.to_string(),
@@ -367,9 +361,9 @@ impl Component for ListRow {
 struct InstallButton {
     provider: ProviderId,
     project_id: String,
+    project_name: String,
     cluster_id: i64,
     content_type: ContentType,
-    /// Cluster already has this one, so the control becomes a static pill
     installed: Option<CardInstalled>,
     add_to_cluster: bool,
 }
@@ -386,6 +380,7 @@ impl InstallButton {
         Self {
             provider: item.provider,
             project_id: item.id.clone(),
+            project_name: item.name.clone(),
             cluster_id,
             content_type,
             installed,
@@ -444,36 +439,15 @@ impl Component for InstallButton {
             use_installs_snapshot().package_busy(is_modpack, cluster_id, provider, &project_id);
 
         if let Some(installed) = &self.installed {
-            if let Some(action) = installed.enable.clone() {
-                return EnableButton {
-                    action,
-                    variant: EnableVariant::Card {
-                        height: INSTALL_BUTTON_H,
-                    },
-                }
-                .into_element();
+            return InstalledActions {
+                cluster_id,
+                provider,
+                project_id: project_id.clone(),
+                project_name: self.project_name.clone(),
+                installed: installed.clone(),
+                busy: installing || waiting,
             }
-            let installed = installed.source;
-            let color = installed.color();
-            return rect()
-                .horizontal()
-                .cross_align(Alignment::Center)
-                .height(Size::px(INSTALL_BUTTON_H))
-                .spacing(6.)
-                .padding(Gaps::new_symmetric(0., 10.))
-                .corner_radius(rounded(6.))
-                .background(colors::component_bg())
-                .border(border_all_color(1., colors::component_border()))
-                .child(Icon::new(IconType::CheckCircle).size(12.).color(color))
-                .child(
-                    label()
-                        .text(installed.label())
-                        .font_size(text_size(11.))
-                        .font_weight(FontWeight::NORMAL)
-                        .max_lines(1)
-                        .color(colors::fg_secondary()),
-                )
-                .into_element();
+            .into_element();
         }
 
         let incompatible = add_to_cluster && latest.is_none() && !versions.is_empty();
@@ -566,6 +540,229 @@ impl Component for InstallButton {
                 choices: choices.read().clone(),
                 open: modpack_prompt,
             }))
+            .into_element()
+    }
+}
+
+/// The cluster list runs every disable through the essential guard this
+/// builds the same row shape the guarded paths read from. The artifact hash
+/// and the bundle pin are what the action itself needs; the rest is filler.
+fn synthetic_entry(
+    provider: ProviderId,
+    project_id: &str,
+    project_name: &str,
+    version: &InstalledVersion,
+) -> PackageEntry {
+    let bundle = version.bundle.as_ref();
+    PackageEntry {
+        package_id: bundle
+            .map(|pin| pin.package_id.clone())
+            .unwrap_or_else(|| project_id.to_string()),
+        bundle_name: bundle.map(|pin| pin.bundle_name.clone()),
+        provider,
+        github_hosted: false,
+        github_url: None,
+        name: project_name.to_string(),
+        file_name: version
+            .display_version
+            .clone()
+            .unwrap_or_else(|| project_id.to_string()),
+        author: String::new(),
+        version: version.display_version.clone(),
+        description: String::new(),
+        icon_url: None,
+        size: 0,
+        categories: Vec::new(),
+        enabled: version.enabled,
+        installed: version.hash.is_some(),
+        hash: version.hash.clone(),
+        manifest_default: bundle.map(|pin| pin.manifest_default).unwrap_or(true),
+        hidden: false,
+        opted_in: true,
+        advanced: false,
+        deleted: false,
+        update_available: false,
+        copy_status: None,
+        copies: Vec::new(),
+        seen_status: SeenStatus::Seen,
+        essential: crate::essential::lookup(provider, project_id),
+        bisect_role: None,
+        locked: false,
+        modpack: None,
+        added_at: None,
+        published_at: None,
+    }
+}
+
+/// Installed state on the browse cards, shown as a provenance pill plus the
+/// action the user most likely wants: Enable or Disable, and Remove. Both
+/// work on bundle-provided mods, which a plain remove could not touch.
+#[derive(PartialEq)]
+struct InstalledActions {
+    cluster_id: i64,
+    provider: ProviderId,
+    project_id: String,
+    project_name: String,
+    installed: Installed,
+    busy: bool,
+}
+
+impl Component for InstalledActions {
+    fn render(&self) -> impl IntoElement {
+        let cluster_id = self.cluster_id;
+        let provider = self.provider;
+        let project_id = self.project_id.clone();
+        let project_name = self.project_name.clone();
+        let busy = self.busy;
+        let installed = &self.installed;
+
+        let mutation = use_cluster_mutation();
+        let running = mutation_is_running(&mutation);
+        let guard = use_essential_guard();
+        let pending_disable = use_disable_confirm();
+        let dispatch = use_dispatch();
+        let warnings_query = use_disable_warnings();
+        let warnings = disable_warnings(&warnings_query);
+
+        let entries: Vec<PackageEntry> = installed
+            .versions
+            .iter()
+            .map(|version| synthetic_entry(provider, &project_id, &project_name, version))
+            .collect();
+        let hashes: Vec<String> = entries.iter().filter_map(|entry| entry.hash.clone()).collect();
+        let any_enabled = entries.iter().any(|entry| entry.enabled);
+        let off = busy || running;
+
+        // Bundle-tracked hashes go through the bundle flow so a sync does
+        // not put the removed mod straight back; manual mods are deleted
+        let (on_remove, remove_dialog) = use_shared_deletes(cluster_id, {
+            let entries = entries.clone();
+            let project_name = project_name.clone();
+            let warnings = warnings.clone();
+            let guard = guard;
+            move |hashes: Vec<String>| {
+                let mutation = mutation.clone();
+                let picked: HashSet<&String> = hashes.iter().collect();
+                let targets: Vec<PackageEntry> = entries
+                    .iter()
+                    .filter(|entry| {
+                        entry
+                            .hash
+                            .as_ref()
+                            .is_some_and(|hash| picked.contains(hash))
+                    })
+                    .cloned()
+                    .collect();
+                let actions: Vec<ClusterAction> = targets
+                    .iter()
+                    .filter_map(|entry| {
+                        entry.hash.as_ref().map(|hash| {
+                            if entry.bundle_name.is_some() {
+                                ClusterAction::DeleteBundledArtifact {
+                                    cluster_id,
+                                    hash: hash.clone(),
+                                }
+                            } else {
+                                ClusterAction::RemoveArtifact {
+                                    cluster_id,
+                                    hash: hash.clone(),
+                                }
+                            }
+                        })
+                    })
+                    .collect();
+                if actions.is_empty() {
+                    return;
+                }
+                let targets: Vec<&PackageEntry> = targets.iter().collect();
+                run_guarded(
+                    ClusterAction::Batch(actions),
+                    &targets,
+                    project_name.clone(),
+                    EssentialGuardKind::Remove,
+                    warnings.clone(),
+                    mutation,
+                    guard,
+                );
+            }
+        });
+
+        let disable = any_enabled.then(|| {
+            let entries = entries.clone();
+            let project_name = project_name.clone();
+            let warnings = warnings.clone();
+            let dispatch = dispatch.clone();
+            Button::new()
+                .secondary()
+                .small()
+                .height(Size::px(INSTALL_BUTTON_H))
+                .padding(Gaps::new_symmetric(0., 11.))
+                .enabled(!off)
+                .on_press(move |_| {
+                    let targets: Vec<PackageEntry> = entries
+                        .iter()
+                        .filter(|entry| entry.enabled)
+                        .cloned()
+                        .collect();
+                    if targets.is_empty() {
+                        return;
+                    }
+                    let refs: Vec<&PackageEntry> = targets.iter().collect();
+                    guard_disable(
+                        disable_request(&refs, cluster_id, project_name.clone()),
+                        &refs,
+                        warnings.clone(),
+                        guard,
+                        pending_disable,
+                        dispatch.clone(),
+                    );
+                })
+                .child(Icon::new(IconType::Minus).size(12.).color(colors::fg_primary()))
+                .text(t("oneclient.browser.common.disable"))
+                .into_element()
+        });
+
+        let enable = installed
+            .disabled_bundled()
+            .and_then(|version| version.enable_action(cluster_id))
+            .map(|action| {
+                EnableButton {
+                    action,
+                    variant: EnableVariant::Card {
+                        height: INSTALL_BUTTON_H,
+                    },
+                }
+                .into_element()
+            });
+
+        let remove = (!hashes.is_empty()).then(|| {
+            Button::new()
+                .ghost()
+                .icon()
+                .height(Size::px(INSTALL_BUTTON_H))
+                .width(Size::px(INSTALL_BUTTON_H))
+                .tooltip(t("oneclient.common.remove"))
+                .enabled(!off)
+                .on_press({
+                    let project_name = project_name.clone();
+                    let hashes = hashes.clone();
+                    move |_| on_remove.call((project_name.clone(), hashes.clone()))
+                })
+                .child(Icon::new(IconType::Trash01).size(13.).color(colors::danger()))
+                .into_element()
+        });
+
+        rect()
+            .horizontal()
+            .cross_align(Alignment::Center)
+            .spacing(6.)
+            .height(Size::px(INSTALL_BUTTON_H))
+            .on_press(|e: Event<PressEventData>| e.stop_propagation())
+            .child(installed_badge(installed.source, 10.))
+            .maybe_child(enable)
+            .maybe_child(disable)
+            .maybe_child(remove)
+            .maybe_child(remove_dialog)
             .into_element()
     }
 }

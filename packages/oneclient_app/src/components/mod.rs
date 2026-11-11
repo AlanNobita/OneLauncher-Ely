@@ -120,7 +120,7 @@ pub use overlay_popup::{
     OVERLAY_BASE_LEVEL, OVERLAY_MAX_LEVEL, OverlayPopup, overlay_is_topmost, popup_surface,
     use_open_level, use_popup_intro,
 };
-pub use package_delete_dialog::use_shared_delete;
+pub use package_delete_dialog::{use_shared_delete, use_shared_deletes};
 pub(crate) use package_row::{
     CARD_GRID_H, CARD_H, GRID_GAP, GRID_MIN_W, badge, bundled_delete_action, disable_request,
     grid_card, guard_disable, icon_box, kebab_button, meta_size, meta_text, on_secondary,

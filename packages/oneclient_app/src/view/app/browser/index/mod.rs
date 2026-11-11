@@ -36,7 +36,7 @@ use crate::view::app::cluster::supports_datapacks;
 use crate::view::app::clusters::ClusterPickerButton;
 
 use super::{
-    EnableButton, EnableVariant, InstallSource, Installed, ModpackVersionPrompt, PackageBanner,
+    EnableButton, EnableVariant, Installed, ModpackVersionPrompt, PackageBanner,
     Thumbnail, WorldInstallPrompt, installed_map, minecraft_choices, preferred_version,
 };
 use crate::utils::abbreviate_number;
