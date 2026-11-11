@@ -4,13 +4,10 @@ use freya::prelude::*;
 use crate::AppAssets;
 
 pub fn use_player_skin(uuid: String) -> (Bytes, bool) {
-    // Always resolve the remote state first so hook order stays stable when a
-    // local skin is added or removed.
+    // Every hook runs before anything is returned: a component must call the
+    // same hooks in the same order on every render, and a local skin appearing
+    // or disappearing would otherwise change that count.
     let profile = super::use_player_profile(uuid.clone(), None::<String>);
-
-    if let Some(bytes) = local_skin_bytes(&uuid) {
-        return (bytes, false);
-    }
 
     let (skin_url, is_slim) = crate::hooks::settled_or_loading(&profile)
         .map_or((None, false), |profile| (profile.skin_url, profile.is_slim));
@@ -21,6 +18,11 @@ pub fn use_player_skin(uuid: String) -> (Bytes, bool) {
     let alex = use_memo(|| AppAssets::get_bytes("alex.png").unwrap_or_default());
 
     let default_slim = (java_string_hash(&uuid) & 1) == 1;
+
+    // A local skin replaces the remote one
+    if let Some(bytes) = local_skin_bytes(&uuid) {
+        return (bytes, false);
+    }
 
     match crate::hooks::loaded_image(skin_url.as_deref(), &skin_query) {
         Some((_, bytes)) => (bytes, is_slim),
@@ -50,14 +52,16 @@ pub fn local_cape_bytes(uuid: &str) -> Option<Bytes> {
 }
 
 pub fn use_player_cape(uuid: &str) -> Option<Bytes> {
-    if let Some(local) = local_cape_bytes(uuid) {
-        return Some(local);
-    }
-
+    // The hooks come first for the same reason they do in use_player_skin: the
+    // count must not change when a local cape is added or removed.
     let profile = super::use_player_profile(uuid.to_string(), None::<String>);
     let cape_url = crate::hooks::settled_or_loading(&profile)
         .and_then(|profile| profile.cape_url.clone());
     let cape_query = super::use_cached_image(cape_url.clone(), 64);
+
+    if let Some(local) = local_cape_bytes(uuid) {
+        return Some(local);
+    }
 
     crate::hooks::loaded_image(cape_url.as_deref(), &cape_query).map(|(_, bytes)| bytes)
 }
