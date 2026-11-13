@@ -1132,13 +1132,35 @@ async fn sync_mods_folder(services: &LauncherServices, cluster: &Cluster) -> boo
             .iter()
             .any(|session| session.started_at.as_str() > added_at)
     };
+    // The cluster's output log is rewritten at every launch, so its timestamp
+    // is when the game last stopped writing. A mod adopted around that moment
+    // arrived while the game was running — the folder sync only runs once the
+    // game is closed, so an adoption that close to the end of a session is one
+    // the session put there.
+    let session_end = last_session_end(cluster).await;
+    let dropped_by_session = |added_at: Option<&str>| -> bool {
+        let Some(added_at) = added_at else {
+            return false;
+        };
+        let (Some(session_end), Ok(added)) = (
+            session_end,
+            chrono::DateTime::parse_from_rfc3339(added_at),
+        ) else {
+            return false;
+        };
+        let added = added.with_timezone(&chrono::Utc);
+        added >= session_end - chrono::Duration::minutes(5)
+            && added <= session_end + chrono::Duration::minutes(30)
+    };
     let removed: Vec<(String, String)> = removed
         .into_iter()
         .filter(|(_, hash)| {
             let Some(link) = linked.iter().find(|link| &link.hash == hash) else {
                 return true;
             };
-            !(link.provider.is_none() && played_since(link.added_at.as_deref()))
+            !(link.provider.is_none()
+                && (played_since(link.added_at.as_deref())
+                    || dropped_by_session(link.added_at.as_deref())))
         })
         .collect();
 
@@ -1403,6 +1425,17 @@ fn duplicate_picker(candidates: &[(usize, Option<String>)]) -> Option<(usize, Ve
     ordered.sort_by(|a, b| a.1.cmp(&b.1));
     let (winner, rest) = ordered.split_last()?;
     Some((winner.0, rest.iter().map(|(index, _)| *index).collect()))
+}
+
+/// When the game last stopped writing for this cluster. The output log is
+/// rewritten at every launch, so its timestamp is the end of the last session.
+async fn last_session_end(cluster: &Cluster) -> Option<chrono::DateTime<chrono::Utc>> {
+    let path = oneclient_cluster::logs::cluster_output_log(cluster).ok()?;
+    polyio::stat(path)
+        .await
+        .ok()
+        .and_then(|meta| meta.modified().ok())
+        .map(chrono::DateTime::<chrono::Utc>::from)
 }
 
 /// A copy that arrived later wins, so the older one is switched off. The

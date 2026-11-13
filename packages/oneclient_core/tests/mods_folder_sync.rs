@@ -151,6 +151,60 @@ async fn a_mod_that_vanished_after_a_session_is_not_switched_off() {
 }
 
 #[tokio::test]
+async fn a_mod_adopted_while_the_game_was_running_is_not_switched_off() {
+    let state = oneclient_core::dev::ephemeral_state().await.unwrap();
+    let global = state.settings.read().global_game_settings.clone();
+    let cluster = state
+        .clusters
+        .create(
+            &global,
+            CreateClusterOptions::new("Dropped", "1.21.1", GameLoader::Fabric),
+        )
+        .await
+        .unwrap();
+
+    let cluster_dir = cluster.dir().unwrap();
+    let mods = cluster_dir.join("mods");
+    std::fs::create_dir_all(&mods).unwrap();
+    manifest::save(
+        &cluster_dir,
+        manifest::MODS_MANIFEST_NAME,
+        &MaterializedManifest::new(cluster.id, Vec::new()),
+    )
+    .await;
+
+    let ctx = state.services.content();
+    let links = || async {
+        let mut links: Vec<(String, bool)> = PackageStore::list_linked_artifacts(cluster.id, &ctx)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|link| (link.cluster_file_name, link.enabled))
+            .collect();
+        links.sort();
+        links
+    };
+
+    // The game downloaded it while it was running, so the folder sync only
+    // sees it once the game is closed
+    std::fs::write(mods.join("a.jar"), jar("dropped")).unwrap();
+    assert!(sync_cluster_mods(&state, cluster.id).await);
+    assert_eq!(links().await, vec![("a.jar".to_owned(), true)]);
+
+    // The output log is rewritten at every launch, so it stands in for the
+    // session that just ended
+    std::fs::write(cluster_dir.join("cluster-output.log"), b"session").unwrap();
+
+    std::fs::remove_file(mods.join("a.jar")).unwrap();
+    let _ = sync_cluster_mods(&state, cluster.id).await;
+    assert_eq!(
+        links().await,
+        vec![("a.jar".to_owned(), true)],
+        "a mod the game put there is not a deletion"
+    );
+}
+
+#[tokio::test]
 async fn a_mod_removed_in_the_launcher_stays_removed_before_the_first_launch() {
     let state = oneclient_core::dev::ephemeral_state().await.unwrap();
     let global = state.settings.read().global_game_settings.clone();
