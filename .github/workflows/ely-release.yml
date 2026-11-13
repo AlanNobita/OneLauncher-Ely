@@ -165,7 +165,7 @@ jobs:
         shell: bash
         run: |
           cd dist
-          find . -type f ! -name SHA256SUMS.txt -printf '%P\n' | sort | while read -r f; do sha256sum "$f"; done > SHA256SUMS.txt
+          find . -type f ! -name SHA256SUMS.txt -printf '%P\n' | sed 's|^[^/]*/||' | sort | while read -r f; do sha256sum "$f"; done > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
