@@ -374,6 +374,16 @@ pub(crate) async fn current_account(
         return Ok(None);
     };
 
+    // An Ely.by session is short-lived and the server does not say when it
+    // ends, so the token the launcher keeps can be dead long before the
+    // expiry stamp it carries. A forced renewal validates it and rotates it
+    // when it is gone.
+    let account = if account.is_ely_by() {
+        auth.refresh_account(account.id).await?
+    } else {
+        account
+    };
+
     Ok(usable(&account, social_allowed()).then_some(account))
 }
 
