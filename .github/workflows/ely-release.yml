@@ -165,7 +165,7 @@ jobs:
         shell: bash
         run: |
           cd dist
-          find . -type f | sort | while read -r f; do sha256sum "$f"; done > SHA256SUMS.txt
+          find . -type f ! -name SHA256SUMS.txt -printf '%P\n' | sort | while read -r f; do sha256sum "$f"; done > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
       - name: Create GitHub Release
@@ -174,8 +174,10 @@ jobs:
           name: OneLauncher Ely ${{ github.ref_name }}
           tag_name: ${{ github.ref_name }}
           files: |
-            dist/**/*
+            dist/latest.json
             dist/SHA256SUMS.txt
+            dist/onelauncher-ely-linux/*
+            dist/onelauncher-ely-windows/*
           draft: false
           prerelease: ${{ startsWith(github.ref_name, 'v0') }}
           generate_release_notes: true
