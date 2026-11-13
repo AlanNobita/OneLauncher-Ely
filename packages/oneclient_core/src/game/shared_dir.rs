@@ -6,6 +6,7 @@ use oneclient_db::dao::applied_migration as migration_dao;
 use oneclient_db::dao::artifact as artifact_dao;
 use oneclient_db::dao::cluster as cluster_dao;
 use oneclient_db::dao::cluster_bundle as bundle_dao;
+use oneclient_db::dao::game_session as game_session_dao;
 
 use crate::LauncherResult;
 use crate::clusters::Cluster;
@@ -39,6 +40,8 @@ struct Desired {
     hash: String,
     /// Where it lives in the artifact cache
     src: std::path::PathBuf,
+    /// When the copy was added to the cluster RFC 3339
+    added_at: Option<String>,
 }
 
 impl Desired {
@@ -402,6 +405,7 @@ async fn desired_global(
                 file_name: row.file_name,
                 hash: row.hash,
                 src,
+                added_at: None,
             });
         }
     }
@@ -1111,6 +1115,33 @@ async fn sync_mods_folder(services: &LauncherServices, cluster: &Cluster) -> boo
             None => Vec::new(),
         }
     };
+
+    // A mod the launcher never installed can be moved by the game's own
+    // tooling: a server's mod manager downloads the version it wants and
+    // swaps files while the game runs. A file that is gone after a session
+    // is therefore not a deletion, and nothing is switched off for it — it
+    // comes back from the cache at the next launch.
+    let sessions = game_session_dao::list_sessions_for_cluster(&services.db, cluster.id)
+        .await
+        .unwrap_or_default();
+    let played_since = |added_at: Option<&str>| -> bool {
+        let Some(added_at) = added_at else {
+            return false;
+        };
+        sessions
+            .iter()
+            .any(|session| session.started_at.as_str() > added_at)
+    };
+    let removed: Vec<(String, String)> = removed
+        .into_iter()
+        .filter(|(_, hash)| {
+            let Some(link) = linked.iter().find(|link| &link.hash == hash) else {
+                return true;
+            };
+            !(link.provider.is_none() && played_since(link.added_at.as_deref()))
+        })
+        .collect();
+
     let disabled = disable_removed(services, cluster, ContentType::Mod, removed).await;
     if !disabled.is_empty() {
         changed = true;
@@ -1360,6 +1391,44 @@ fn removal_summary(disabled: &[String]) -> String {
     }
 }
 
+/// Picks the copy that stays when a mod is in the folder more than once: the
+/// one that arrived last, so a version the server asked for beats the one
+/// that was there before. Returns the winner and the copies that lose.
+fn duplicate_picker(candidates: &[(usize, Option<String>)]) -> Option<(usize, Vec<usize>)> {
+    if candidates.len() < 2 {
+        return None;
+    }
+
+    let mut ordered = candidates.to_vec();
+    ordered.sort_by(|a, b| a.1.cmp(&b.1));
+    let (winner, rest) = ordered.split_last()?;
+    Some((winner.0, rest.iter().map(|(index, _)| *index).collect()))
+}
+
+/// A copy that arrived later wins, so the older one is switched off. The
+/// names say which copy stayed and which one went.
+fn duplicate_mods_notice(switched: &[(String, String)]) -> (&'static str, String) {
+    let kept = removal_summary(
+        &switched
+            .iter()
+            .map(|(winner, _)| winner.clone())
+            .collect::<Vec<_>>(),
+    );
+    let dropped = removal_summary(
+        &switched
+            .iter()
+            .map(|(_, loser)| loser.clone())
+            .collect::<Vec<_>>(),
+    );
+
+    (
+        "Mod copy in use",
+        format!(
+            "{kept} is the copy that is used now because it arrived last — a server can ask for one exact version. {dropped} was switched off instead of being deleted and can be turned back on in OneClient."
+        ),
+    )
+}
+
 fn removal_notice(disabled: &[String], shared: bool) -> (&'static str, String) {
     let names = removal_summary(disabled);
     let where_from = if shared {
@@ -1495,10 +1564,80 @@ async fn desired_linked(
             file_name: link.cluster_file_name,
             hash: link.hash,
             src,
+            added_at: link.added_at,
         });
     }
 
-    Ok(skip_shadowed_bundle_mods(services, cluster, desired).await)
+    let desired = skip_shadowed_bundle_mods(services, cluster, desired).await;
+    Ok(resolve_duplicate_mods(services, cluster, desired).await)
+}
+
+/// Two copies of the same mod in one cluster. The loader would only load one of
+/// them anyway, so the launcher decides which: the copy that arrived last is
+/// the one that was asked for — a server's mod manager drops the version it
+/// wants into the folder while the game runs — so that is the one that stays.
+/// The other copy is switched off rather than deleted, so it can come back.
+async fn resolve_duplicate_mods(
+    services: &LauncherServices,
+    cluster: &Cluster,
+    desired: Vec<Desired>,
+) -> Vec<Desired> {
+    let mut by_id: HashMap<String, Vec<usize>> = HashMap::new();
+    for (index, item) in desired.iter().enumerate() {
+        if item.content_type != ContentType::Mod {
+            continue;
+        }
+        let Some(id) = cached_mod_id(&item.hash, &item.src).await else {
+            continue;
+        };
+        by_id.entry(id.id).or_default().push(index);
+    }
+
+    let mut losers: HashSet<String> = HashSet::new();
+    let mut switched: Vec<(String, String)> = Vec::new();
+    for group in by_id.into_values() {
+        let candidates: Vec<(usize, Option<String>)> = group
+            .into_iter()
+            .map(|index| (index, desired[index].added_at.clone()))
+            .collect();
+        let Some((winner, rest)) = duplicate_picker(&candidates) else {
+            continue;
+        };
+
+        for loser in rest {
+            losers.insert(desired[loser].hash.clone());
+            switched.push((
+                desired[winner].file_name.clone(),
+                desired[loser].file_name.clone(),
+            ));
+        }
+    }
+
+    if losers.is_empty() {
+        return desired;
+    }
+
+    let ctx = services.content();
+    for hash in &losers {
+        if let Err(err) = oneclient_content::bundles::set_artifact_enabled_to(
+            cluster.id,
+            hash,
+            false,
+            &ctx,
+        )
+        .await
+        {
+            tracing::warn!(hash, error = %err, "failed to switch a duplicate copy off");
+        }
+    }
+
+    let (title, body) = duplicate_mods_notice(&switched);
+    services.events.notify(title).body(body).send();
+
+    desired
+        .into_iter()
+        .filter(|item| !losers.contains(&item.hash))
+        .collect()
 }
 
 async fn skip_shadowed_bundle_mods(
@@ -3605,5 +3744,52 @@ mod tests {
 
         assert!(ours.contains("from_manifest.jar"));
         assert!(!ours.contains("bsl.zip"));
+    }
+
+    #[test]
+    fn the_copy_that_arrived_last_wins_a_duplicate() {
+        let candidates = vec![
+            (0, Some("2026-11-13T05:06:09Z".to_string())),
+            (1, Some("2026-11-13T07:56:57Z".to_string())),
+        ];
+
+        let (winner, losers) = duplicate_picker(&candidates).expect("a winner");
+
+        assert_eq!(winner, 1);
+        assert_eq!(losers, vec![0]);
+    }
+
+    #[test]
+    fn a_copy_without_a_stamp_does_not_win_over_one_with_it() {
+        let candidates = vec![
+            (0, None),
+            (1, Some("2026-11-13T05:06:09Z".to_string())),
+        ];
+
+        let (winner, losers) = duplicate_picker(&candidates).expect("a winner");
+
+        assert_eq!(winner, 1);
+        assert_eq!(losers, vec![0]);
+    }
+
+    #[test]
+    fn one_copy_is_not_a_duplicate() {
+        let candidates = vec![(0, Some("2026-11-13T05:06:09Z".to_string()))];
+
+        assert!(duplicate_picker(&candidates).is_none());
+    }
+
+    #[test]
+    fn the_older_copies_are_the_ones_that_lose() {
+        let candidates = vec![
+            (0, Some("2026-01-01T00:00:00Z".to_string())),
+            (1, Some("2026-02-01T00:00:00Z".to_string())),
+            (2, Some("2026-03-01T00:00:00Z".to_string())),
+        ];
+
+        let (winner, losers) = duplicate_picker(&candidates).expect("a winner");
+
+        assert_eq!(winner, 2);
+        assert_eq!(losers, vec![0, 1]);
     }
 }

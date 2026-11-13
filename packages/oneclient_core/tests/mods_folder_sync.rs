@@ -88,6 +88,69 @@ async fn hand_edits_to_the_mods_folder_reach_the_database() {
 }
 
 #[tokio::test]
+async fn a_mod_that_vanished_after_a_session_is_not_switched_off() {
+    let state = oneclient_core::dev::ephemeral_state().await.unwrap();
+    let global = state.settings.read().global_game_settings.clone();
+    let cluster = state
+        .clusters
+        .create(
+            &global,
+            CreateClusterOptions::new("Session", "1.21.1", GameLoader::Fabric),
+        )
+        .await
+        .unwrap();
+
+    let cluster_dir = cluster.dir().unwrap();
+    let mods = cluster_dir.join("mods");
+    std::fs::create_dir_all(&mods).unwrap();
+    manifest::save(
+        &cluster_dir,
+        manifest::MODS_MANIFEST_NAME,
+        &MaterializedManifest::new(cluster.id, Vec::new()),
+    )
+    .await;
+
+    let ctx = state.services.content();
+    let links = || async {
+        let mut links: Vec<(String, bool)> = PackageStore::list_linked_artifacts(cluster.id, &ctx)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|link| (link.cluster_file_name, link.enabled))
+            .collect();
+        links.sort();
+        links
+    };
+
+    std::fs::write(mods.join("a.jar"), jar("one")).unwrap();
+    assert!(sync_cluster_mods(&state, cluster.id).await);
+    assert_eq!(links().await, vec![("a.jar".to_owned(), true)]);
+
+    // The game ran after the mod was linked, so its tools could have moved it
+    oneclient_db::dao::game_session::insert_session(
+        &state.services.db,
+        &oneclient_db::models::NewGameSession {
+            cluster_id: cluster.id,
+            started_at: "2999-01-01T00:00:00+00:00",
+            ram_allocated_mb: 2048,
+            mods_enabled: 1,
+            java_vendor: None,
+            java_version: None,
+        },
+    )
+    .await
+    .unwrap();
+
+    std::fs::remove_file(mods.join("a.jar")).unwrap();
+    let _ = sync_cluster_mods(&state, cluster.id).await;
+    assert_eq!(
+        links().await,
+        vec![("a.jar".to_owned(), true)],
+        "a mod that went missing while the game was running is not a deletion"
+    );
+}
+
+#[tokio::test]
 async fn a_mod_removed_in_the_launcher_stays_removed_before_the_first_launch() {
     let state = oneclient_core::dev::ephemeral_state().await.unwrap();
     let global = state.settings.read().global_game_settings.clone();
