@@ -198,3 +198,4 @@ jobs:
 
             ### Fixed
             - Setting a local skin or cape no longer crashes the launcher (a hook-order bug that left the app unable to start)
+            - Mods a server asks for are no longer switched off and deleted: a copy that arrives while the game runs is kept, and when two versions of one mod are present the one that arrived last — the one the server asked for — is the one that is used
