@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::path::{Path, PathBuf};
 
 use super::*;
 
@@ -450,6 +451,21 @@ pub(super) fn toolbar_bar(
             move || package_list_text(&export, content_type, header.as_deref()),
         ));
     }
+    if local_tab {
+        let folder_dispatch = dispatch.clone();
+        controls.push(
+            Button::new()
+                .secondary()
+                .height(Size::px(34.))
+                .font_size(text_size(12.))
+                .on_press(move |_| {
+                    import_from_folder(cluster_id, content_type, folder_dispatch.clone())
+                })
+                .child(Icon::new(IconType::Folder).size(15.))
+                .text(t("oneclient.cluster.package_manager.import_folder"))
+                .into_element(),
+        );
+    }
     controls.push(
         Button::new()
             .primary()
@@ -777,6 +793,127 @@ fn import_from_file(cluster_id: i64, content_type: ContentType, dispatch: Action
             );
         }
     });
+}
+
+/// A picked folder can be a build output tree so the walk caps both how deep
+/// it goes and how much it queues before telling the user about the rest
+const MAX_IMPORT_DEPTH: usize = 8;
+const MAX_IMPORT_FILES: usize = 256;
+
+fn importable_extension(content_type: ContentType) -> &'static str {
+    match content_type {
+        ContentType::Mod => "jar",
+        _ => "zip",
+    }
+}
+
+/// Every matching file under `root` (dotfiles and dot-folders skipped),
+/// sorted for a deterministic import order, and whether the cap cut it short
+async fn collect_content_files(root: &Path, content_type: ContentType) -> (Vec<PathBuf>, bool) {
+    let wanted = importable_extension(content_type);
+    let mut found = Vec::new();
+    let mut truncated = false;
+    let mut stack = vec![(root.to_path_buf(), 0usize)];
+
+    while let Some((dir, depth)) = stack.pop() {
+        let Ok(mut entries) = polyio::read_dir(&dir).await else {
+            continue;
+        };
+
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if name.starts_with('.') {
+                continue;
+            }
+            let Ok(file_type) = entry.file_type().await else {
+                continue;
+            };
+            if file_type.is_dir() {
+                if depth < MAX_IMPORT_DEPTH {
+                    stack.push((entry.path(), depth + 1));
+                }
+                continue;
+            }
+            if !file_type.is_file() {
+                continue;
+            }
+            let matches = Path::new(name)
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .is_some_and(|ext| ext.eq_ignore_ascii_case(wanted));
+            if !matches {
+                continue;
+            }
+            if found.len() >= MAX_IMPORT_FILES {
+                truncated = true;
+                break;
+            }
+            found.push(entry.path());
+        }
+
+        if truncated {
+            break;
+        }
+    }
+
+    found.sort();
+    (found, truncated)
+}
+
+fn import_from_folder(cluster_id: i64, content_type: ContentType, dispatch: Actions) {
+    spawn(async move {
+        let Some(handle) = rfd::AsyncFileDialog::new()
+            .set_title(t(
+                "oneclient.cluster.package_manager.import_folder.picker_title",
+            ))
+            .pick_folder()
+            .await
+        else {
+            return;
+        };
+
+        let root = handle.path().to_path_buf();
+        let (files, truncated) = collect_content_files(&root, content_type).await;
+
+        if files.is_empty() {
+            dispatch
+                .notify(t(
+                    "oneclient.cluster.package_manager.import_folder.nothing_found",
+                ))
+                .send();
+            return;
+        }
+
+        if truncated {
+            let max = MAX_IMPORT_FILES.to_string();
+            dispatch
+                .notify(tf(
+                    "oneclient.cluster.package_manager.import_folder.truncated",
+                    &[&max.as_str()],
+                ))
+                .send();
+        }
+
+        dispatch.import_local_files(
+            cluster_id,
+            files.into_iter().map(|path| (path, content_type)).collect(),
+        );
+    });
+}
+
+fn add_from_folder_button(
+    cluster_id: i64,
+    content_type: ContentType,
+    dispatch: Actions,
+) -> impl IntoElement {
+    Button::new()
+        .secondary()
+        .on_press(move |_| import_from_folder(cluster_id, content_type, dispatch.clone()))
+        .child(Icon::new(IconType::Folder).size(14.))
+        .text(t("oneclient.cluster.package_manager.import_folder"))
 }
 
 fn add_from_file_button(
@@ -1273,6 +1410,16 @@ fn local_empty(
             )))
         })
         .child(rect().height(Size::px(6.)))
-        .child(add_from_file_button(cluster_id, content_type, dispatch))
+        .child(
+            rect()
+                .horizontal()
+                .spacing(8.)
+                .child(add_from_folder_button(
+                    cluster_id,
+                    content_type,
+                    dispatch.clone(),
+                ))
+                .child(add_from_file_button(cluster_id, content_type, dispatch)),
+        )
         .into_element()
 }
